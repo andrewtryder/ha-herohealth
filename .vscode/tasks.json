@@ -1,0 +1,10 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {"label": "Run Home Assistant 2026.8.3", "type": "shell", "command": "scripts/run-ha-dev"},
+    {"label": "pytest", "type": "shell", "command": "pytest"},
+    {"label": "Ruff check", "type": "shell", "command": "ruff check ."},
+    {"label": "Ruff format", "type": "shell", "command": "ruff format ."},
+    {"label": "pre-commit", "type": "shell", "command": "pre-commit run --all-files"}
+  ]
+}

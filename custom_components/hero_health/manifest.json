@@ -1,0 +1,11 @@
+{
+  "domain": "hero_health",
+  "name": "Hero Health",
+  "version": "0.1.0",
+  "config_flow": true,
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "codeowners": ["@andrewtryder"],
+  "documentation": "https://github.com/andrewtryder/ha-herohealth",
+  "issue_tracker": "https://github.com/andrewtryder/ha-herohealth/issues"
+}

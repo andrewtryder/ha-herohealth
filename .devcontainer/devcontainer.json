@@ -1,0 +1,26 @@
+{
+  "name": "Hero Health Home Assistant Development",
+  "image": "mcr.microsoft.com/devcontainers/python:3.14-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "PYTHONPATH": "${containerWorkspaceFolder}",
+    "PATH": "/home/vscode/.venv/bin:${containerEnv:PATH}"
+  },
+  "forwardPorts": [8123],
+  "postCreateCommand": "scripts/devcontainer-bootstrap",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "ms-python.vscode-pylance", "charliermarsh.ruff", "esbenp.prettier-vscode"],
+      "settings": {
+        "python.defaultInterpreterPath": "/home/vscode/.venv/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["tests"],
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {"source.organizeImports": "always"}
+      }
+    }
+  }
+}

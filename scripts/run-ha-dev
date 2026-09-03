@@ -1,0 +1,34 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PYTHON=${PYTHON:-}
+if [ -z "$PYTHON" ]; then
+  if [ -x "$ROOT/.venv/bin/python" ]; then
+    PYTHON="$ROOT/.venv/bin/python"
+  else
+    PYTHON=python
+  fi
+fi
+HA_DIR="$ROOT/.ha-dev"
+EXPECTED=2026.8.3
+
+VERSION=$($PYTHON -c 'from homeassistant.const import __version__; print(__version__)')
+printf 'Home Assistant: %s\n' "$VERSION"
+if [ "$VERSION" != "$EXPECTED" ]; then
+  printf 'Expected baseline Home Assistant %s; refusing to start a different runtime.\n' "$EXPECTED" >&2
+  exit 1
+fi
+mkdir -p "$HA_DIR/custom_components"
+ln -sfn "$ROOT/custom_components/hero_health" "$HA_DIR/custom_components/hero_health"
+if [ ! -f "$HA_DIR/configuration.yaml" ]; then
+  cat > "$HA_DIR/configuration.yaml" <<'EOF'
+default_config:
+
+logger:
+  default: info
+  logs:
+    custom_components.hero_health: debug
+EOF
+fi
+exec "$PYTHON" -m homeassistant -c "$HA_DIR"

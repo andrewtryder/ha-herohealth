@@ -1,0 +1,15 @@
+.storage/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+.venv/
+*.py[cod]
+*.egg-info/
+.ha-dev/
+.storage/
+home-assistant_v2.db*
+home-assistant.log*
+coverage_html/
+.vscode/settings.json
