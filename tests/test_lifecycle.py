@@ -651,11 +651,18 @@ async def test_coordinator_retries_entire_snapshot_after_endpoint_auth_failure(h
     session = _real_session(
         client,
         HeroTokens("valid", "refresh", 3600, 9999999999),
-        SimpleNamespace(refresh_access_token=AsyncMock(), login_with_password=login),
+        SimpleNamespace(
+            refresh_access_token=AsyncMock(
+                return_value=HeroTokens("recovered", "refresh", 3600, 9999999999)
+            ),
+            login_with_password=login,
+        ),
     )
 
     assert await HeroCoordinator(hass, entry, session)._async_update_data()
-    login.assert_awaited_once_with("test@example.invalid", "fake-password")
+    # An early API authentication failure recovers with refresh-token rotation first.
+    session._auth.refresh_access_token.assert_awaited_once_with("refresh")
+    login.assert_not_awaited()
     assert [name for name, _token in client.calls].count("offline") == 2
     assert {token for _name, token in client.calls if token == "recovered"}
 

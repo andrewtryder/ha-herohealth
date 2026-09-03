@@ -9,20 +9,35 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
 )
 
 from .api.exceptions import HeroAuthenticationError, HeroConnectionError, HeroError
-from .const import CONF_ACCOUNT_ID, DOMAIN
+from .const import (
+    CONF_ACCOUNT_ID,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL_MINUTES,
+    DOMAIN,
+    MAX_SCAN_INTERVAL_MINUTES,
+    MIN_SCAN_INTERVAL_MINUTES,
+)
 from .session import HeroSession
 
 
 class HeroHealthConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> HeroHealthOptionsFlow:
+        return HeroHealthOptionsFlow()
 
     def __init__(self) -> None:
         self._data: dict[str, str] = {}
@@ -189,3 +204,33 @@ def _schema():
 
 def _account_label(account: dict[str, Any]) -> str:
     return str(account.get("device_nickname") or "Hero account")
+
+
+class HeroHealthOptionsFlow(config_entries.OptionsFlowWithReload):
+    """Configure the deliberately conservative background refresh cadence."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_SCAN_INTERVAL,
+                        default=self.config_entry.options.get(
+                            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MINUTES
+                        ),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=MIN_SCAN_INTERVAL_MINUTES,
+                            max=MAX_SCAN_INTERVAL_MINUTES,
+                            step=1,
+                            unit_of_measurement="min",
+                        )
+                    )
+                }
+            ),
+        )

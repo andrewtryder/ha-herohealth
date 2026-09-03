@@ -6,11 +6,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from custom_components.hero_health.api.auth import HeroAuthClient, parse_login_fields
+from custom_components.hero_health.api.auth import (
+    HeroAuthClient,
+    parse_callback,
+    parse_login_fields,
+)
 from custom_components.hero_health.api.client import HeroCloudClient
 from custom_components.hero_health.api.exceptions import (
     HeroApiError,
     HeroAuthenticationError,
+    HeroConnectionError,
+    HeroRateLimitError,
 )
 from custom_components.hero_health.api.models import (
     HeroDose,
@@ -102,6 +108,46 @@ async def test_auth_errors_are_sanitized():
         await auth.refresh_access_token("fake-refresh")
     with pytest.raises(HeroAuthenticationError):
         parse_login_fields("<html></html>")
+
+
+@pytest.mark.parametrize(
+    ("location", "expected"),
+    [
+        ("heroapp://auth?code=example&state=expected", "example"),
+        ("heroapp://auth?code=example", "example"),
+    ],
+)
+def test_callback_validation_accepts_observed_optional_state(location, expected):
+    assert parse_callback(location, "expected") == expected
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "https://auth?code=example&state=expected",
+        "heroapp://other?code=example&state=expected",
+        "heroapp://auth?code=example&state=wrong",
+        "heroapp://auth?state=expected",
+    ],
+)
+def test_callback_validation_rejects_unexpected_redirects(location):
+    with pytest.raises(HeroAuthenticationError):
+        parse_callback(location, "expected")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [
+        (401, HeroAuthenticationError),
+        (429, HeroRateLimitError),
+        (503, HeroConnectionError),
+    ],
+)
+async def test_token_http_errors_distinguish_auth_and_transient_failures(status, error):
+    auth = HeroAuthClient(Http([Response(status=status, headers={"Retry-After": "5"})]))
+    with pytest.raises(error):
+        await auth.refresh_access_token("fake-refresh")
 
 
 @pytest.mark.asyncio

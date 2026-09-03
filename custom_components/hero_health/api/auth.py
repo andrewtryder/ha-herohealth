@@ -16,7 +16,12 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import aiohttp
 
-from .exceptions import HeroApiError, HeroAuthenticationError, HeroConnectionError
+from .exceptions import (
+    HeroApiError,
+    HeroAuthenticationError,
+    HeroConnectionError,
+    HeroRateLimitError,
+)
 from .models import HeroTokens
 
 DEFAULT_CLIENT_ID = "sGNw0O6padHYWwSWIon21jt1QqEYAkmZLYUps60L"
@@ -62,6 +67,39 @@ def parse_login_fields(html: str) -> tuple[str, str]:
     return csrf, parser.fields.get("visitor_id", "")
 
 
+def parse_callback(location: str | None, expected_state: str) -> str:
+    """Validate Hero's custom callback without logging its sensitive values."""
+    parsed = urlparse(location or "")
+    if parsed.scheme != "heroapp" or parsed.netloc != "auth":
+        raise HeroAuthenticationError("Hero login returned an unexpected callback")
+    params = parse_qs(parsed.query)
+    code = params.get("code", [None])[0]
+    if not code:
+        raise HeroAuthenticationError("Hero login did not return an authorization code")
+    returned_state = params.get("state", [None])[0]
+    # Existing observed callbacks may omit state; validate it whenever supplied.
+    if returned_state is not None and returned_state != expected_state:
+        raise HeroAuthenticationError("Hero login callback state did not match")
+    return code
+
+
+def _raise_for_status(status: int, headers: Any) -> None:
+    if status in (401, 403):
+        raise HeroAuthenticationError("Hero authentication was rejected")
+    if status == 429:
+        try:
+            retry_after = int(headers.get("Retry-After", ""))
+        except TypeError, ValueError:
+            retry_after = None
+        raise HeroRateLimitError(retry_after)
+    if status >= 500:
+        raise HeroConnectionError(
+            "Hero authentication service is temporarily unavailable"
+        )
+    if status >= 400:
+        raise HeroApiError("Hero authentication request was rejected")
+
+
 class HeroAuthClient:
     """Async PKCE/password and refresh authentication client."""
 
@@ -98,9 +136,10 @@ class HeroAuthClient:
                     "User-Agent": ANDROID_USER_AGENT,
                 },
             ) as response:
+                _raise_for_status(response.status, response.headers)
                 if response.status != 200:
-                    raise HeroAuthenticationError(
-                        f"Hero login page returned HTTP {response.status}"
+                    raise HeroApiError(
+                        "Hero login page returned an unexpected response"
                     )
                 post_url, csrf, visitor = (
                     str(response.url),
@@ -124,17 +163,12 @@ class HeroAuthClient:
                 },
             ) as response:
                 if response.status not in (302, 303):
+                    _raise_for_status(response.status, response.headers)
                     raise HeroAuthenticationError(
                         "Hero rejected the supplied credentials"
                     )
                 location = response.headers.get("Location")
-            code = parse_qs(
-                urlparse((location or "").replace("heroapp://", "http://")).query
-            ).get("code", [None])[0]
-            if not code:
-                raise HeroAuthenticationError(
-                    "Hero login did not return an authorization code"
-                )
+            code = parse_callback(location, params["state"])
             return await self.exchange_code(code, verifier)
         except aiohttp.ClientError as err:
             raise HeroConnectionError(
@@ -171,10 +205,7 @@ class HeroAuthClient:
                     "User-Agent": ANDROID_USER_AGENT,
                 },
             ) as response:
-                if response.status >= 400:
-                    raise HeroAuthenticationError(
-                        f"Hero token endpoint returned HTTP {response.status}"
-                    )
+                _raise_for_status(response.status, response.headers)
                 payload: dict[str, Any] = await response.json(content_type=None)
             return HeroTokens.from_response(payload, time.time())
         except aiohttp.ClientError as err:

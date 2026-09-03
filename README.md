@@ -37,6 +37,11 @@ Use a Lovelace entities card with the above entities; no custom card is required
 
 ## Actions
 
+Hero Health refreshes in the background every three hours by default to reduce
+traffic to Hero's undocumented cloud API. Change this interval in the integration's
+Configure dialog (15 minutes to 24 hours), or use the refresh action when immediate
+data is needed.
+
 `hero_health.refresh` immediately refreshes shared data. Both Hero actions require
 `config_entry_id`; Home Assistant presents this as a Hero Health connection selector.
 Manual entity updates of the low-medications sensor also refresh its coordinator.
@@ -55,8 +60,10 @@ the action's Hero preflight or safety boundary.
 
 ## Privacy and troubleshooting
 
-Credentials and session tokens are never entity attributes or diagnostics. Avoid
-sharing debug logs: they may still reveal operational timing. For temporary debug
+Credentials and session tokens are never entity attributes or diagnostics. Hero's
+password is retained in Home Assistant's configuration storage only so the integration
+can recover when refresh credentials fail; treat Home Assistant configuration storage
+and backups as sensitive. Avoid sharing debug logs: they may still reveal operational timing. For temporary debug
 logging, add `custom_components.hero_health: debug`, reproduce the issue, then
 remove it. Do not post credentials, tokens, cookies, account IDs, or medication
 details in an issue.

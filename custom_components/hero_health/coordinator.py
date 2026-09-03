@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -13,7 +14,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api.exceptions import HeroAuthenticationError, HeroError
-from .const import DEFAULT_SCAN_INTERVAL
+from .const import DEFAULT_SCAN_INTERVAL_MINUTES
 from .entity import is_low_medication
 from .session import HeroSession
 
@@ -26,7 +27,11 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             __import__("logging").getLogger(__name__),
             name="Hero Health",
-            update_interval=DEFAULT_SCAN_INTERVAL,
+            update_interval=timedelta(
+                minutes=getattr(entry, "options", {}).get(
+                    "scan_interval", DEFAULT_SCAN_INTERVAL_MINUTES
+                )
+            ),
         )
         self.entry, self.session, self.dispense_lock = entry, session, asyncio.Lock()
 
