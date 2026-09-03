@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -11,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api.exceptions import HeroAuthenticationError, HeroError
 from .const import DEFAULT_SCAN_INTERVAL
@@ -49,7 +49,7 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 client.last_d2d_config(),
                 client.home_screen_doses(),
                 client.get_home_screen_events(),
-                client.stats(date.today().isoformat()),
+                client.stats(dt_util.now().date().isoformat()),
                 return_exceptions=True,
             )
             offline, status, config, doses, events, stats = results

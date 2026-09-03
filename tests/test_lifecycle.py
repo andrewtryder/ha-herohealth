@@ -5,7 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryNotReady,
+    ServiceValidationError,
+)
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from custom_components.hero_health import (
@@ -18,8 +23,10 @@ from custom_components.hero_health import (
 from custom_components.hero_health.api.exceptions import (
     HeroAuthenticationError,
     HeroConnectionError,
+    HeroError,
 )
 from custom_components.hero_health.api.models import HeroTokens
+from custom_components.hero_health.coordinator import HeroCoordinator
 from custom_components.hero_health.session import HeroSession
 
 
@@ -133,6 +140,23 @@ async def test_setup_translates_temporary_connection_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_setup_handles_generic_exception_and_closes_session(monkeypatch):
+    class CrashingSession(FakeSession):
+        async def async_initialize(self):
+            raise RuntimeError("unexpected crash")
+
+    entry = SimpleNamespace(
+        entry_id="entry",
+        data={"email": "test@example.invalid", "password": "fake"},
+        runtime_data=None,
+    )
+    hass = SimpleNamespace(services=FakeServices(), config_entries=FakeEntries([entry]))
+    monkeypatch.setattr("custom_components.hero_health.HeroSession", CrashingSession)
+    with pytest.raises(RuntimeError):
+        await async_setup_entry(hass, entry)
+
+
+@pytest.mark.asyncio
 async def test_action_targeting_and_dispense_safety():
     session = FakeSession()
     entry = SimpleNamespace(entry_id="entry", runtime_data=None)
@@ -160,6 +184,14 @@ async def test_action_targeting_and_dispense_safety():
         await _async_dispense(hass, call)
     with pytest.raises(ServiceValidationError):
         _coordinator_for_call(hass, SimpleNamespace(data={"entry_id": "missing"}))
+
+    # Multiple entries without specifying entry_id raises ServiceValidationError
+    entry2 = SimpleNamespace(
+        entry_id="entry2", runtime_data=SimpleNamespace(coordinator=coordinator)
+    )
+    hass_multiple = SimpleNamespace(config_entries=FakeEntries([entry, entry2]))
+    with pytest.raises(ServiceValidationError, match="multiple Hero Health entries"):
+        _coordinator_for_call(hass_multiple, SimpleNamespace(data={}))
 
 
 @pytest.mark.asyncio
@@ -285,3 +317,66 @@ async def test_real_session_owns_and_closes_its_aiohttp_session(hass):
     assert not session._http.closed
     await session.async_close()
     assert session._http.closed
+
+
+@pytest.mark.asyncio
+async def test_coordinator_stats_date_uses_ha_local_timezone(hass, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    # UTC is 2026-06-11 02:00:00, but HA local is UTC-5 -> date 2026-06-10
+    local_tz = timezone(timedelta(hours=-5))
+    local_now = datetime(2026, 6, 10, 21, 0, 0, tzinfo=local_tz)
+    monkeypatch.setattr(dt_util, "now", lambda: local_now)
+
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    stats_mock = AsyncMock(return_value={"stats": {}})
+    client_mock = SimpleNamespace(
+        check_hero_offline=AsyncMock(return_value={"hero_offline": False}),
+        user_status=AsyncMock(return_value={"status": "online"}),
+        last_d2d_config=AsyncMock(return_value={"config": {"pills": []}}),
+        home_screen_doses=AsyncMock(return_value={"dates": []}),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=stats_mock,
+    )
+    session = SimpleNamespace(
+        client=client_mock, async_initialize=AsyncMock(return_value=client_mock)
+    )
+    coordinator = HeroCoordinator(hass, entry, session)
+    data = await coordinator._async_update_data()
+    assert data is not None
+    stats_mock.assert_awaited_once_with("2026-06-10")
+
+
+@pytest.mark.asyncio
+async def test_coordinator_update_data_error_handling(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+
+    # HeroAuthenticationError -> ConfigEntryAuthFailed
+    auth_failing_client = SimpleNamespace(
+        check_hero_offline=AsyncMock(side_effect=HeroAuthenticationError("auth error")),
+        user_status=AsyncMock(return_value={}),
+        last_d2d_config=AsyncMock(return_value={}),
+        home_screen_doses=AsyncMock(return_value={}),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=AsyncMock(return_value={}),
+    )
+    coord_auth = HeroCoordinator(
+        hass, entry, SimpleNamespace(client=auth_failing_client)
+    )
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coord_auth._async_update_data()
+
+    # HeroError on status check -> UpdateFailed
+    status_exc_client = SimpleNamespace(
+        check_hero_offline=AsyncMock(return_value={"hero_offline": False}),
+        user_status=AsyncMock(side_effect=HeroError("offline error")),
+        last_d2d_config=AsyncMock(return_value={}),
+        home_screen_doses=AsyncMock(return_value={}),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=AsyncMock(return_value={}),
+    )
+    coord_status_exc = HeroCoordinator(
+        hass, entry, SimpleNamespace(client=status_exc_client)
+    )
+    with pytest.raises(UpdateFailed):
+        await coord_status_exc._async_update_data()

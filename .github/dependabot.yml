@@ -6,3 +6,6 @@ updates:
   - package-ecosystem: pip
     directory: /
     schedule: {interval: weekly}
+    # Pin deterministic HA baseline (HA 2026.8.3); floating versions are tested separately in future-compat workflow.
+    ignore:
+      - dependency-name: pytest-homeassistant-custom-component
