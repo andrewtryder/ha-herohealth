@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/andrewtryder/ha-herohealth/compare/v0.1.1...v0.1.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* await Home Assistant service actions ([ce54420](https://github.com/andrewtryder/ha-herohealth/commit/ce5442050a736d4bad099d1971094c26bc30d97c))
+
 ## [0.1.1](https://github.com/andrewtryder/ha-herohealth/compare/v0.1.0...v0.1.1) (2026-09-03)
 
 
