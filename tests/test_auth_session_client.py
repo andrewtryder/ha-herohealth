@@ -157,7 +157,7 @@ async def test_session_execute_storage_and_close_paths():
     session._store.async_load = AsyncMock(return_value={"last_dispense_id": "dose"})
     assert await session.async_last_dispense_id() == "dose"
     await session.async_close()
-    assert session._http.closed
+    assert not session._http.closed
 
 
 def test_models_validate_and_normalize_values():

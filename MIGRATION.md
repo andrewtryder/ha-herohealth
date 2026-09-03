@@ -30,5 +30,6 @@ automation:
 ```
 
 `homeassistant.update_entity` on the low-medications entity also requests a
-coordinator refresh. The `hero_health.refresh` action is the explicit, documented
-choice and is required if multiple Hero entries need a particular `entry_id`.
+coordinator refresh. Both Hero actions require `config_entry_id`, selected in the
+Home Assistant UI from the Hero Health connection dropdown; they never infer an
+account from the number of entries.

@@ -14,6 +14,7 @@ Home Assistant directly to Hero Cloud—there is no Cloudflare Worker dependency
 - A compatibility-friendly `sensor.hero_health_low_medications` state (`None` or
   comma-separated low medication names), plus structured attributes
 - Ten stable physical slot sensors and low-level binary sensors
+- A `binary_sensor.hero_health_dispense_available` indicator that mirrors the backend's remote-dispense eligibility checks
 - Next scheduled-dose timestamp and native device registry association
 - Explicit refresh and safety-gated remote scheduled-dose service actions
 
@@ -36,15 +37,21 @@ Use a Lovelace entities card with the above entities; no custom card is required
 
 ## Actions
 
-`hero_health.refresh` immediately refreshes shared data. Manual entity updates of
-the low-medications sensor also refresh its coordinator.
+`hero_health.refresh` immediately refreshes shared data. Both Hero actions require
+`config_entry_id`; Home Assistant presents this as a Hero Health connection selector.
+Manual entity updates of the low-medications sensor also refresh its coordinator.
 
 `hero_health.dispense_scheduled_dose` is safety-sensitive. It refreshes Hero data,
-requires an actual `time_to_take` scheduled dose within 30 minutes before through
-six hours after its time, matches an optional `scheduled_datetime` against Hero's
-live data, performs WebSocket authorization and preflight, and succeeds only after
-Hero reports completion. Put it behind a Lovelace confirmation or a deliberate
-automation; it is not a button entity.
+requires Hero itself to report `time_to_take`, and permits a dose only from 30
+minutes before through six hours after its scheduled time. The six-hour late window
+is an observed implementation limitation pending additional live validation. It
+matches an optional `scheduled_datetime` against Hero's live data, performs WebSocket
+authorization and preflight, and succeeds only after Hero reports completion. Put it
+behind a Lovelace confirmation or a deliberate automation; it is not a button entity.
+
+The dispense-available binary sensor is observability only. Lovelace users may use
+it to conditionally show their own confirmed action control, but it never bypasses
+the action's Hero preflight or safety boundary.
 
 ## Privacy and troubleshooting
 

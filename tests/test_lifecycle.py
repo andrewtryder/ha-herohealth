@@ -18,6 +18,7 @@ from custom_components.hero_health import (
     _async_dispense,
     _async_refresh,
     _coordinator_for_call,
+    async_setup,
     async_setup_entry,
     async_unload_entry,
 )
@@ -108,6 +109,11 @@ class FakeEntries:
 
     def async_entries(self, _domain):
         return self.entries
+
+    def async_get_entry(self, entry_id):
+        return next(
+            (entry for entry in self.entries if entry.entry_id == entry_id), None
+        )
 
     async def async_forward_entry_setups(self, entry, platforms):
         self.forwarded.append((entry, platforms))
@@ -204,6 +210,7 @@ async def _setup_registry_entry(hass, monkeypatch, account_id="account-1"):
         },
     )
     entry.add_to_hass(hass)
+    await async_setup(hass, {})
     monkeypatch.setattr("custom_components.hero_health.HeroSession", RegistrySession)
     monkeypatch.setattr(
         "custom_components.hero_health.HeroCoordinator", RegistryCoordinator
@@ -234,7 +241,7 @@ async def test_setup_runtime_data_actions_and_unload(monkeypatch):
     )
     assert await async_setup_entry(hass, entry)
     assert entry.runtime_data.coordinator.refreshed == 1
-    assert len(hass.services.handlers) == 2
+    assert len(hass.services.handlers) == 0
     await async_unload_entry(hass, entry)
     assert entry.runtime_data is None
     assert not hass.services.handlers
@@ -245,7 +252,9 @@ async def test_refresh_service_registry_awaits_registered_handler(hass, monkeypa
     entry = await _setup_registry_entry(hass, monkeypatch)
     coordinator = entry.runtime_data.coordinator
 
-    await hass.services.async_call(DOMAIN, SERVICE_REFRESH, {}, blocking=True)
+    await hass.services.async_call(
+        DOMAIN, SERVICE_REFRESH, {"config_entry_id": entry.entry_id}, blocking=True
+    )
 
     coordinator.async_request_refresh.assert_awaited_once()
     await async_unload_entry(hass, entry)
@@ -272,7 +281,9 @@ async def test_dispense_service_registry_awaits_registered_handler(hass, monkeyp
         }
     }
 
-    await hass.services.async_call(DOMAIN, SERVICE_DISPENSE, {}, blocking=True)
+    await hass.services.async_call(
+        DOMAIN, SERVICE_DISPENSE, {"config_entry_id": entry.entry_id}, blocking=True
+    )
 
     coordinator.async_request_refresh.assert_awaited_once()
     session.async_execute.assert_awaited_once()
@@ -287,7 +298,12 @@ async def test_invalid_dispense_service_registry_surfaces_validation_error(
     entry = await _setup_registry_entry(hass, monkeypatch)
 
     with pytest.raises(ServiceValidationError, match="No eligible Hero scheduled dose"):
-        await hass.services.async_call(DOMAIN, SERVICE_DISPENSE, {}, blocking=True)
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_DISPENSE,
+            {"config_entry_id": entry.entry_id},
+            blocking=True,
+        )
 
     assert entry.runtime_data.coordinator.async_request_refresh.await_count == 1
     await async_unload_entry(hass, entry)
@@ -301,7 +317,10 @@ async def test_service_registry_targets_multiple_entries_and_unloads_last_servic
     second = await _setup_registry_entry(hass, monkeypatch, "account-2")
 
     await hass.services.async_call(
-        DOMAIN, SERVICE_REFRESH, {"entry_id": second.entry_id}, blocking=True
+        DOMAIN,
+        SERVICE_REFRESH,
+        {"config_entry_id": second.entry_id},
+        blocking=True,
     )
 
     assert first.runtime_data.coordinator.async_request_refresh.await_count == 0
@@ -309,8 +328,8 @@ async def test_service_registry_targets_multiple_entries_and_unloads_last_servic
     await async_unload_entry(hass, first)
     assert hass.services.has_service(DOMAIN, SERVICE_REFRESH)
     await async_unload_entry(hass, second)
-    assert not hass.services.has_service(DOMAIN, SERVICE_REFRESH)
-    assert not hass.services.has_service(DOMAIN, SERVICE_DISPENSE)
+    assert hass.services.has_service(DOMAIN, SERVICE_REFRESH)
+    assert hass.services.has_service(DOMAIN, SERVICE_DISPENSE)
 
 
 @pytest.mark.asyncio
@@ -368,20 +387,22 @@ async def test_action_targeting_and_dispense_safety():
     }
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
     hass = SimpleNamespace(config_entries=FakeEntries([entry]))
-    call = SimpleNamespace(data={})
+    call = SimpleNamespace(data={"config_entry_id": "entry"})
     assert _coordinator_for_call(hass, call) is coordinator
     await _async_refresh(hass, call)
     with pytest.raises(ServiceValidationError):
         await _async_dispense(hass, call)
     with pytest.raises(ServiceValidationError):
-        _coordinator_for_call(hass, SimpleNamespace(data={"entry_id": "missing"}))
+        _coordinator_for_call(
+            hass, SimpleNamespace(data={"config_entry_id": "missing"})
+        )
 
-    # Multiple entries without specifying entry_id raises ServiceValidationError
+    # Missing config_entry_id is invalid even when multiple entries exist.
     entry2 = SimpleNamespace(
         entry_id="entry2", runtime_data=SimpleNamespace(coordinator=coordinator)
     )
     hass_multiple = SimpleNamespace(config_entries=FakeEntries([entry, entry2]))
-    with pytest.raises(ServiceValidationError, match="multiple Hero Health entries"):
+    with pytest.raises(ServiceValidationError, match="config entry is required"):
         _coordinator_for_call(hass_multiple, SimpleNamespace(data={}))
 
 
@@ -407,10 +428,10 @@ async def test_dispense_action_executes_one_eligible_dose_and_deduplicates():
     }
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
     hass = SimpleNamespace(config_entries=FakeEntries([entry]))
-    await _async_dispense(hass, SimpleNamespace(data={}))
+    await _async_dispense(hass, SimpleNamespace(data={"config_entry_id": "entry"}))
     assert session.last == dose
     with pytest.raises(ServiceValidationError, match="already dispensed"):
-        await _async_dispense(hass, SimpleNamespace(data={}))
+        await _async_dispense(hass, SimpleNamespace(data={"config_entry_id": "entry"}))
 
 
 @pytest.mark.asyncio
@@ -507,7 +528,8 @@ async def test_real_session_owns_and_closes_its_aiohttp_session(hass):
     )
     assert not session._http.closed
     await session.async_close()
-    assert session._http.closed
+    # The Home Assistant helper owns and closes the isolated session on shutdown.
+    assert not session._http.closed
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,12 @@
 refresh:
   name: Refresh Hero data
-  description: Immediately refreshes Hero Health coordinator data. Specify entry_id when multiple Hero accounts are configured.
+  description: Immediately refreshes one Hero Health connection.
   fields:
-    entry_id:
-      required: false
+    config_entry_id:
+      required: true
       selector:
-        text:
+        config_entry:
+          integration: hero_health
 dispense_scheduled_dose:
   name: Dispense scheduled dose
   description: Safety-sensitive action. Dispenses only a currently eligible Hero scheduled dose after Hero preflight and completion confirmation.
@@ -14,7 +15,8 @@ dispense_scheduled_dose:
       required: false
       selector:
         text:
-    entry_id:
-      required: false
+    config_entry_id:
+      required: true
       selector:
-        text:
+        config_entry:
+          integration: hero_health

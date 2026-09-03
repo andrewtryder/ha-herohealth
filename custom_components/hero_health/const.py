@@ -16,6 +16,9 @@ CONF_PASSWORD = HA_CONF_PASSWORD
 SERVICE_DISPENSE = "dispense_scheduled_dose"
 SERVICE_REFRESH = "refresh"
 ATTR_SCHEDULED_DATETIME = "scheduled_datetime"
+ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+DISPENSE_EARLY_WINDOW = timedelta(minutes=30)
+DISPENSE_LATE_WINDOW = timedelta(hours=6)
 EVENT_REAUTH = "hero_health_reauth_required"
 
 if TYPE_CHECKING:

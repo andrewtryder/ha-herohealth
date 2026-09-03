@@ -17,6 +17,23 @@ from custom_components.hero_health.api.exceptions import (
 from custom_components.hero_health.const import CONF_ACCOUNT_ID, DOMAIN
 
 
+def test_config_translation_descriptions_exist():
+    """Each configuration form has translated help text."""
+    import json
+    from pathlib import Path
+
+    translations = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "custom_components/hero_health/translations/en.json"
+        ).read_text()
+    )
+    for step in ("user", "reconfigure", "account"):
+        content = translations["config"]["step"][step]
+        assert content["description"]
+        assert content["data_description"]
+
+
 class FakeClient:
     def __init__(self, accounts):
         self.accounts = accounts

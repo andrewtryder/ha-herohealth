@@ -89,6 +89,14 @@ def structural_counts(config: Any, doses: Any) -> tuple[int, int, int]:
     return slots_returned, configured_slots, dose_groups
 
 
+def stats_structure(stats: Any) -> list[str]:
+    """Return sanitized stats field names and value types only."""
+    payload = stats.get("stats", stats) if isinstance(stats, Mapping) else {}
+    if not isinstance(payload, Mapping):
+        return []
+    return [f"{key}: {type(value).__name__}" for key, value in sorted(payload.items())]
+
+
 async def async_run() -> list[str]:
     """Authenticate and run only approved read-only Hero REST calls."""
     email = os.environ.get("HERO_EMAIL")
@@ -109,10 +117,10 @@ async def async_run() -> list[str]:
         config = await client.last_d2d_config()
         doses = await client.home_screen_doses()
         await client.get_home_screen_events()
-        await client.stats(date.today().isoformat())
+        stats = await client.stats(date.today().isoformat())
 
     slots, configured_slots, dose_groups = structural_counts(config, doses)
-    return [
+    report = [
         "Authentication: OK",
         f"Accounts: {len(accounts)}",
         "Status: OK",
@@ -123,6 +131,11 @@ async def async_run() -> list[str]:
         "Stats: OK",
         "Read-only smoke test completed successfully.",
     ]
+    if os.environ.get("HERO_SMOKE_STRUCTURE") == "1":
+        report.extend(
+            ["Stats fields:", *[f"  {field}" for field in stats_structure(stats)]]
+        )
+    return report
 
 
 def main() -> int:

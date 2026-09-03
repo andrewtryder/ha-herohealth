@@ -9,6 +9,7 @@ from typing import Any
 
 import aiohttp
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.storage import Store
 
 from .api.auth import HeroAuthClient
@@ -36,7 +37,8 @@ class HeroSession:
         )
         self._store = Store[dict[str, Any]](hass, 1, f"hero_health.{entry_id}")
         self._persist = persist
-        self._http = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar())
+        # Hero's authentication cookies must not be shared with Home Assistant.
+        self._http = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar())
         self._auth = HeroAuthClient(self._http)
         self._tokens: HeroTokens | None = None
         self.client: HeroCloudClient | None = None
@@ -113,4 +115,6 @@ class HeroSession:
         return (await self._store.async_load() or {}).get("last_dispense_id")
 
     async def async_close(self) -> None:
-        await self._http.close()
+        """Release per-entry state; Home Assistant owns helper-created sessions."""
+        # async_create_clientsession registers cleanup with Home Assistant.
+        return None
