@@ -35,10 +35,18 @@ class HeroSession:
             password,
             account_id,
         )
+        self._identity = {
+            "email": email.strip().lower(),
+            "account_id": account_id or "",
+        }
         self._store = Store[dict[str, Any]](hass, 1, f"hero_health.{entry_id}")
         self._persist = persist
         # Hero's authentication cookies must not be shared with Home Assistant.
-        self._http = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar())
+        self._http = async_create_clientsession(
+            hass,
+            cookie_jar=aiohttp.CookieJar(),
+            timeout=aiohttp.ClientTimeout(total=25),
+        )
         self._auth = HeroAuthClient(self._http)
         self._tokens: HeroTokens | None = None
         self._last_dispense_id: str | None = None
@@ -47,16 +55,22 @@ class HeroSession:
         self._state_lock = asyncio.Lock()
 
     async def async_initialize(self) -> HeroCloudClient:
+        self._tokens = None
         saved = (await self._store.async_load() or {}) if self._persist else {}
-        try:
-            self._tokens = HeroTokens.from_dict(saved["tokens"])
-        except KeyError, TypeError, ValueError:
-            pass
+        saved_identity = saved.get("identity") if isinstance(saved, dict) else None
+        identity_matches = saved_identity == self._current_identity()
+        if identity_matches:
+            try:
+                self._tokens = HeroTokens.from_dict(saved["tokens"])
+            except KeyError, TypeError, ValueError:
+                pass
         last_dispense_id = (
             saved.get("last_dispense_id") if isinstance(saved, dict) else None
         )
         self._last_dispense_id = (
-            last_dispense_id if isinstance(last_dispense_id, str) else None
+            last_dispense_id
+            if identity_matches and isinstance(last_dispense_id, str)
+            else None
         )
         await self._async_ensure_tokens()
         assert self._tokens
@@ -75,9 +89,21 @@ class HeroSession:
             state: dict[str, Any] = {}
             if self._tokens:
                 state["tokens"] = self._tokens.as_dict()
+                state["identity"] = self._current_identity()
             if last_dispense_id := getattr(self, "_last_dispense_id", None):
                 state["last_dispense_id"] = last_dispense_id
             await self._store.async_save(state)
+
+    def _current_identity(self) -> dict[str, str]:
+        """Return normalized non-secret identity metadata, including test shims."""
+        return getattr(
+            self,
+            "_identity",
+            {
+                "email": getattr(self, "_email", "").strip().lower(),
+                "account_id": getattr(self, "account_id", None) or "",
+            },
+        )
 
     async def _async_ensure_tokens(
         self, *, force_refresh: bool = False, force_login: bool = False

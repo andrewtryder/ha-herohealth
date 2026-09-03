@@ -13,6 +13,7 @@ from .exceptions import (
     HeroAuthenticationError,
     HeroConnectionError,
     HeroDispenseError,
+    HeroRateLimitError,
 )
 
 CLOUD_BASE_URL = "https://cloud.herohealth.com"
@@ -73,6 +74,12 @@ class HeroCloudClient:
                         f"Hero API returned HTTP {response.status}"
                     )
                 if response.status >= 400:
+                    if response.status == 429:
+                        try:
+                            retry_after = int(response.headers.get("Retry-After", ""))
+                        except TypeError, ValueError:
+                            retry_after = None
+                        raise HeroRateLimitError(retry_after)
                     raise HeroApiError(
                         f"Hero API request failed with HTTP {response.status}"
                     )
@@ -80,6 +87,8 @@ class HeroCloudClient:
                 return json.loads(text) if text else None
         except aiohttp.ClientError as err:
             raise HeroConnectionError("Unable to connect to Hero Cloud") from err
+        except TimeoutError as err:
+            raise HeroConnectionError("Hero Cloud request timed out") from err
         except json.JSONDecodeError as err:
             raise HeroApiError("Hero API returned invalid JSON") from err
 

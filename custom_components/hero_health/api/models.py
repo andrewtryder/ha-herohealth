@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 
@@ -16,10 +17,21 @@ class HeroTokens:
     @classmethod
     def from_response(cls, data: dict[str, Any], created_at: float) -> HeroTokens:
         try:
+            access_token = data["access_token"]
+            if not isinstance(access_token, str) or not access_token:
+                raise ValueError("access token is invalid")
+            refresh_token = data.get("refresh_token", "")
+            if refresh_token is None:
+                refresh_token = ""
+            if not isinstance(refresh_token, str):
+                raise ValueError("refresh token is invalid")
+            expires_in = int(data["expires_in"])
+            if expires_in <= 0 or not isfinite(float(created_at)):
+                raise ValueError("token timing is invalid")
             return cls(
-                str(data["access_token"]),
-                str(data.get("refresh_token", "")),
-                int(data["expires_in"]),
+                access_token,
+                refresh_token,
+                expires_in,
                 created_at,
             )
         except (KeyError, TypeError, ValueError) as err:

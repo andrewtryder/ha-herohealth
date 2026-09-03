@@ -206,6 +206,77 @@ async def test_session_execute_storage_and_close_paths():
     assert not session._http.closed
 
 
+@pytest.mark.asyncio
+async def test_persisted_tokens_are_bound_to_normalized_identity():
+    tokens = HeroTokens("cached", "refresh", 3600, 9999999999)
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._store = SimpleNamespace(
+        async_load=AsyncMock(
+            return_value={
+                "tokens": tokens.as_dict(),
+                "last_dispense_id": "dose",
+                "identity": {"email": "user@example.invalid", "account_id": "account"},
+            }
+        ),
+        async_save=AsyncMock(),
+    )
+    session._identity = {"email": "user@example.invalid", "account_id": "account"}
+    session._email, session._password, session.account_id = (
+        "user@example.invalid",
+        "pw",
+        "account",
+    )
+    session._http, session._lock, session._state_lock = (
+        Http([]),
+        asyncio.Lock(),
+        asyncio.Lock(),
+    )
+    session._auth = SimpleNamespace(login_with_password=AsyncMock())
+    session.client = None
+    await session.async_initialize()
+    assert session._tokens.access_token == "cached"
+    session._auth.login_with_password.assert_not_awaited()
+    assert await session.async_last_dispense_id() == "dose"
+
+
+@pytest.mark.asyncio
+async def test_changed_identity_discards_tokens_and_idempotency_state():
+    old = HeroTokens("cached", "refresh", 3600, 9999999999)
+    fresh = HeroTokens("fresh", "refresh", 3600, 9999999999)
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._store = SimpleNamespace(
+        async_load=AsyncMock(
+            return_value={
+                "tokens": old.as_dict(),
+                "last_dispense_id": "old-dose",
+                "identity": {
+                    "email": "old@example.invalid",
+                    "account_id": "old-account",
+                },
+            }
+        ),
+        async_save=AsyncMock(),
+    )
+    session._identity = {"email": "new@example.invalid", "account_id": "new-account"}
+    session._email, session._password, session.account_id = (
+        "new@example.invalid",
+        "pw",
+        "new-account",
+    )
+    session._http, session._lock, session._state_lock = (
+        Http([]),
+        asyncio.Lock(),
+        asyncio.Lock(),
+    )
+    session._auth = SimpleNamespace(login_with_password=AsyncMock(return_value=fresh))
+    session.client = None
+    await session.async_initialize()
+    assert session._tokens.access_token == "fresh"
+    assert await session.async_last_dispense_id() is None
+
+
 def test_models_validate_and_normalize_values():
     assert (
         HeroTokens.from_dict(
@@ -222,3 +293,49 @@ def test_models_validate_and_normalize_values():
     assert HeroDose("2026-01-01T00:00:00+00:00", ["time_to_take"], []).has_time_to_take
     with pytest.raises(ValueError):
         HeroTokens.from_response({}, 0)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"access_token": None, "expires_in": 1},
+        {"access_token": "", "expires_in": 1},
+        {"access_token": "token", "expires_in": 0},
+        {"access_token": "token", "expires_in": -1},
+    ],
+)
+def test_tokens_reject_malformed_success_responses(payload):
+    with pytest.raises(ValueError):
+        HeroTokens.from_response(payload, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_malformed_identity_matched_storage_falls_back_to_login():
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._store = SimpleNamespace(
+        async_load=AsyncMock(
+            return_value={
+                "tokens": {"access_token": None},
+                "identity": {"email": "user@example.invalid", "account_id": "account"},
+            }
+        ),
+        async_save=AsyncMock(),
+    )
+    session._identity = {"email": "user@example.invalid", "account_id": "account"}
+    session._email, session._password, session.account_id = (
+        "user@example.invalid",
+        "pw",
+        "account",
+    )
+    session._http, session._lock, session._state_lock = (
+        Http([]),
+        asyncio.Lock(),
+        asyncio.Lock(),
+    )
+    session._auth = SimpleNamespace(
+        login_with_password=AsyncMock(return_value=HeroTokens("fresh", "", 3600, 1))
+    )
+    session.client = None
+    await session.async_initialize()
+    session._auth.login_with_password.assert_awaited_once()

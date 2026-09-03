@@ -27,6 +27,7 @@ from custom_components.hero_health.api.exceptions import (
     HeroAuthenticationError,
     HeroConnectionError,
     HeroError,
+    HeroRateLimitError,
 )
 from custom_components.hero_health.api.models import HeroTokens
 from custom_components.hero_health.const import (
@@ -722,3 +723,17 @@ async def test_session_serializes_concurrent_token_refreshes():
 
     refresh.assert_awaited_once_with("refresh")
     assert client.access_token == "refreshed"
+
+
+@pytest.mark.asyncio
+async def test_coordinator_rate_limit_is_transient_and_uses_retry_after(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+
+    async def execute(_operation):
+        raise HeroRateLimitError(120)
+
+    with pytest.raises(UpdateFailed) as raised:
+        await HeroCoordinator(
+            hass, entry, SimpleNamespace(async_execute=execute)
+        )._async_update_data()
+    assert raised.value.retry_after == 120

@@ -13,7 +13,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api.exceptions import HeroAuthenticationError, HeroError
+from .api.exceptions import HeroAuthenticationError, HeroError, HeroRateLimitError
 from .const import DEFAULT_SCAN_INTERVAL_MINUTES
 from .entity import is_low_medication
 from .session import HeroSession
@@ -76,6 +76,13 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             }
         except HeroAuthenticationError as err:
             raise ConfigEntryAuthFailed("Hero authentication required") from err
+        except HeroRateLimitError as err:
+            retry_after = err.retry_after
+            if retry_after is None or not 0 < retry_after <= 86400:
+                retry_after = 300
+            raise UpdateFailed(
+                "Hero temporarily rate limited requests", retry_after=retry_after
+            ) from err
         except HeroError as err:
             raise UpdateFailed(str(err)) from err
 

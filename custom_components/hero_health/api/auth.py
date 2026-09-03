@@ -174,6 +174,8 @@ class HeroAuthClient:
             raise HeroConnectionError(
                 "Unable to connect to Hero authentication"
             ) from err
+        except TimeoutError as err:
+            raise HeroConnectionError("Hero authentication timed out") from err
 
     async def exchange_code(self, code: str, verifier: str) -> HeroTokens:
         return await self._token_request(
@@ -214,3 +216,5 @@ class HeroAuthClient:
             ) from err
         except ValueError as err:
             raise HeroApiError("Hero token response was invalid") from err
+        except TimeoutError as err:
+            raise HeroConnectionError("Hero authentication timed out") from err
