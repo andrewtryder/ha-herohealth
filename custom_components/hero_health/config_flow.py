@@ -8,6 +8,11 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.selector import (
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
 from .api.exceptions import HeroAuthenticationError, HeroConnectionError, HeroError
 from .const import CONF_ACCOUNT_ID, DOMAIN
@@ -152,7 +157,14 @@ class HeroHealthConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 def _schema():
-    return vol.Schema({vol.Required(CONF_EMAIL): str, vol.Required(CONF_PASSWORD): str})
+    return vol.Schema(
+        {
+            vol.Required(CONF_EMAIL): str,
+            vol.Required(CONF_PASSWORD): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            ),
+        }
+    )
 
 
 def _account_label(account: dict[str, Any]) -> str:

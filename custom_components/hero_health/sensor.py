@@ -35,6 +35,9 @@ async def async_setup_entry(
 class LowMedicationsSensor(HeroEntity, SensorEntity):
     _attr_name = "Low medications"
 
+    def __init__(self, coordinator: HeroCoordinator) -> None:
+        super().__init__(coordinator, "low_medications")
+
     @property
     def native_value(self):
         names = [
@@ -60,8 +63,10 @@ class LowMedicationsSensor(HeroEntity, SensorEntity):
 class AdherenceSensor(HeroEntity, SensorEntity):
     _attr_name = "7-day adherence"
     _attr_native_unit_of_measurement = UnitOfRatio.PERCENTAGE
-    _attr_device_class = SensorDeviceClass.PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: HeroCoordinator) -> None:
+        super().__init__(coordinator, "adherence")
 
     @property
     def native_value(self):
@@ -128,6 +133,9 @@ class SlotSensor(HeroEntity, SensorEntity):
 class NextDoseSensor(HeroEntity, SensorEntity):
     _attr_name = "Next scheduled dose"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator: HeroCoordinator) -> None:
+        super().__init__(coordinator, "next_scheduled_dose")
 
     @property
     def native_value(self):

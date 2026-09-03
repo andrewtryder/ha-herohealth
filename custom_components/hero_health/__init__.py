@@ -5,8 +5,9 @@ from __future__ import annotations
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 
+from .api.exceptions import HeroConnectionError
 from .const import (
     ATTR_SCHEDULED_DATETIME,
     DOMAIN,
@@ -34,6 +35,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: HeroHealthConfigEntry) -
         await session.async_initialize()
         coordinator = HeroCoordinator(hass, entry, session)
         await coordinator.async_config_entry_first_refresh()
+    except HeroConnectionError as err:
+        await session.async_close()
+        raise ConfigEntryNotReady("Unable to connect to Hero") from err
     except Exception:
         await session.async_close()
         raise

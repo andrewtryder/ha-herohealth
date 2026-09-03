@@ -22,6 +22,9 @@ class ConnectivitySensor(HeroEntity, BinarySensorEntity):
     _attr_name = "Dispenser connectivity"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
 
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "connectivity")
+
     @property
     def is_on(self):
         return not bool(self.coordinator.data["offline"].get("hero_offline", True))
