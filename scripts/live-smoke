@@ -1,0 +1,37 @@
+#!/usr/bin/env sh
+# Development-only, read-only smoke test for the real Hero protocol.
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ENV_FILE="$ROOT/.env.local"
+
+if [ ! -f "$ENV_FILE" ]; then
+  printf '%s\n' 'Live smoke test requires .env.local. Copy .env.example to .env.local and fill the credentials.' >&2
+  exit 2
+fi
+
+# Do not inherit Hero credentials from the caller: this command deliberately reads
+# them only from the ignored local file. Sourcing happens in this short-lived shell.
+unset HERO_EMAIL HERO_PASSWORD HERO_ACCOUNT_ID
+. "$ENV_FILE"
+
+if [ -z "${HERO_EMAIL:-}" ] || [ -z "${HERO_PASSWORD:-}" ]; then
+  printf '%s\n' 'Live smoke test requires non-empty HERO_EMAIL and HERO_PASSWORD in .env.local.' >&2
+  exit 2
+fi
+
+PYTHON=${PYTHON:-}
+if [ -z "$PYTHON" ]; then
+  if [ -x "$ROOT/.venv/bin/python" ]; then
+    PYTHON="$ROOT/.venv/bin/python"
+  else
+    PYTHON=python
+  fi
+fi
+
+export HERO_EMAIL HERO_PASSWORD
+if [ -n "${HERO_ACCOUNT_ID:-}" ]; then
+  export HERO_ACCOUNT_ID
+fi
+cd "$ROOT"
+exec "$PYTHON" scripts/live_smoke.py

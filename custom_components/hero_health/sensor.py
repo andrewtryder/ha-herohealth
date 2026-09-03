@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -11,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfRatio
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .coordinator import HeroCoordinator
 from .entity import HeroEntity, parse_hero_datetime
@@ -138,9 +141,21 @@ class NextDoseSensor(HeroEntity, SensorEntity):
         super().__init__(coordinator, "next_scheduled_dose")
 
     @property
-    def native_value(self):
-        for day in self.coordinator.data["doses"].get("dates", []):
-            for slot in day.get("times", []):
-                if slot.get("scheduled_datetime"):
-                    return parse_hero_datetime(slot["scheduled_datetime"])
-        return None
+    def native_value(self) -> datetime | None:
+        now = dt_util.now()
+        candidates: list[datetime] = []
+        doses = (self.coordinator.data or {}).get("doses", {})
+        if isinstance(doses, dict):
+            for day in doses.get("dates", []):
+                if isinstance(day, dict):
+                    for slot in day.get("times", []):
+                        if isinstance(slot, dict):
+                            val = slot.get("scheduled_datetime")
+                            if val and isinstance(val, str):
+                                try:
+                                    parsed = parse_hero_datetime(val)
+                                except TypeError, ValueError, AttributeError:
+                                    continue
+                                if parsed >= now:
+                                    candidates.append(parsed)
+        return min(candidates) if candidates else None
