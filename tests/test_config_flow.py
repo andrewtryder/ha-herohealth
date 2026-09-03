@@ -71,6 +71,16 @@ def fake_sessions(monkeypatch):
     return FakeSession
 
 
+@pytest.fixture(autouse=True)
+async def _unload_loaded_hero_entries(hass):
+    """Cancel coordinator refresh timers created by reauth/reconfigure reloads."""
+    yield
+    await hass.async_block_till_done()
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if getattr(entry, "runtime_data", None) is not None:
+            assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 @pytest.mark.asyncio
 async def test_user_flow_creates_single_account_entry(hass, fake_sessions):
     form = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
