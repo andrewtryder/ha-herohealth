@@ -37,7 +37,8 @@ class HeroEntity(CoordinatorEntity):
     def __init__(self, coordinator: HeroCoordinator, key: str) -> None:
         super().__init__(coordinator)
         self._key = key
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_{key}"
+        owner_id = coordinator.entry.unique_id or coordinator.entry.entry_id
+        self._attr_unique_id = f"{owner_id}_{key}"
 
     @property
     def device_info(self):

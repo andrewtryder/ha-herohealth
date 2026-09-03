@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import (
@@ -25,7 +27,8 @@ class HeroHealthConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._data: dict[str, str] = {}
         self._accounts: list[dict[str, Any]] = []
-        self._reauth_entry = None
+        self._reauth_entry: ConfigEntry | None = None
+        self._reconfigure_entry: ConfigEntry | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -43,6 +46,7 @@ class HeroHealthConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             None,
             persist=False,
         )
+        step_id = "reconfigure" if self._reconfigure_entry else "user"
         try:
             client = await session.async_initialize()
             accounts = await client.caregiver_patient_list()
@@ -51,7 +55,7 @@ class HeroHealthConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             if not self._accounts:
                 return self.async_show_form(
-                    step_id="user",
+                    step_id=step_id,
                     data_schema=_schema(),
                     errors={"base": "invalid_response"},
                 )
@@ -73,15 +77,17 @@ class HeroHealthConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
         except HeroAuthenticationError:
             return self.async_show_form(
-                step_id="user", data_schema=_schema(), errors={"base": "invalid_auth"}
+                step_id=step_id, data_schema=_schema(), errors={"base": "invalid_auth"}
             )
         except HeroConnectionError:
             return self.async_show_form(
-                step_id="user", data_schema=_schema(), errors={"base": "cannot_connect"}
+                step_id=step_id,
+                data_schema=_schema(),
+                errors={"base": "cannot_connect"},
             )
         except HeroError:
             return self.async_show_form(
-                step_id="user",
+                step_id=step_id,
                 data_schema=_schema(),
                 errors={"base": "invalid_response"},
             )
@@ -103,6 +109,7 @@ class HeroHealthConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _finish(self, account: dict[str, Any]) -> FlowResult:
         account_id = str(account["account_id"])
         data = {**self._data, CONF_ACCOUNT_ID: account_id}
+        step_id = "reconfigure" if self._reconfigure_entry else "user"
         validation = HeroSession(
             self.hass,
             "config-flow-validation",
@@ -116,30 +123,43 @@ class HeroHealthConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await client.user_status(account_id)
         except HeroAuthenticationError:
             return self.async_show_form(
-                step_id="user", data_schema=_schema(), errors={"base": "invalid_auth"}
+                step_id=step_id, data_schema=_schema(), errors={"base": "invalid_auth"}
             )
         except HeroConnectionError:
             return self.async_show_form(
-                step_id="user", data_schema=_schema(), errors={"base": "cannot_connect"}
+                step_id=step_id,
+                data_schema=_schema(),
+                errors={"base": "cannot_connect"},
             )
         except HeroError:
             return self.async_show_form(
-                step_id="user",
+                step_id=step_id,
                 data_schema=_schema(),
                 errors={"base": "invalid_response"},
             )
         finally:
             await validation.async_close()
+
         if self._reauth_entry:
-            self.hass.config_entries.async_update_entry(
+            await self.async_set_unique_id(account_id)
+            self._abort_if_unique_id_mismatch(reason="wrong_account")
+            return self.async_update_reload_and_abort(
                 self._reauth_entry, data=data, unique_id=account_id
             )
-            return self.async_abort(reason="reauth_successful")
+
+        if self._reconfigure_entry:
+            if account_id != self._reconfigure_entry.unique_id:
+                await self.async_set_unique_id(account_id)
+                self._abort_if_unique_id_configured()
+            return self.async_update_reload_and_abort(
+                self._reconfigure_entry, data=data, unique_id=account_id
+            )
+
         await self.async_set_unique_id(account_id)
         self._abort_if_unique_id_configured()
         return self.async_create_entry(title="Hero Health", data=data)
 
-    async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> FlowResult:
         self._reauth_entry = self.hass.config_entries.async_get_entry(
             self.context["entry_id"]
         )
@@ -148,7 +168,7 @@ class HeroHealthConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        self._reauth_entry = self.hass.config_entries.async_get_entry(
+        self._reconfigure_entry = self.hass.config_entries.async_get_entry(
             self.context["entry_id"]
         )
         if user_input is None:
