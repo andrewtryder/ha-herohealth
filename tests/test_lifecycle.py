@@ -12,6 +12,7 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.hero_health import (
     _async_dispense,
@@ -27,6 +28,11 @@ from custom_components.hero_health.api.exceptions import (
     HeroError,
 )
 from custom_components.hero_health.api.models import HeroTokens
+from custom_components.hero_health.const import (
+    DOMAIN,
+    SERVICE_DISPENSE,
+    SERVICE_REFRESH,
+)
 from custom_components.hero_health.coordinator import HeroCoordinator
 from custom_components.hero_health.session import HeroSession
 
@@ -149,6 +155,67 @@ class FakeCoordinator:
         self.refreshed += 1
 
 
+class RegistrySession:
+    """Session fake for testing Home Assistant's real service dispatcher."""
+
+    def __init__(self, *_args):
+        self.last = None
+        self.async_execute = AsyncMock(side_effect=self._execute)
+
+    async def async_initialize(self):
+        return SimpleNamespace()
+
+    async def _execute(self, operation):
+        return await operation(
+            SimpleNamespace(dispense_scheduled_dose=AsyncMock(return_value={}))
+        )
+
+    async def async_last_dispense_id(self):
+        return self.last
+
+    async def async_save_dispense_id(self, identifier):
+        self.last = identifier
+
+    async def async_close(self):
+        return None
+
+
+class RegistryCoordinator:
+    def __init__(self, _hass, entry, session):
+        self.entry, self.session = entry, session
+        self.dispense_lock = asyncio.Lock()
+        self.data = {"doses": {"dates": []}}
+        self.first_refresh = AsyncMock()
+        self.async_request_refresh = AsyncMock()
+
+    async def async_config_entry_first_refresh(self):
+        await self.first_refresh()
+
+
+async def _setup_registry_entry(hass, monkeypatch, account_id="account-1"):
+    """Set up an entry while retaining Home Assistant's actual service registry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=account_id,
+        data={
+            "email": "test@example.invalid",
+            "password": "fake",
+            "account_id": account_id,
+        },
+    )
+    entry.add_to_hass(hass)
+    monkeypatch.setattr("custom_components.hero_health.HeroSession", RegistrySession)
+    monkeypatch.setattr(
+        "custom_components.hero_health.HeroCoordinator", RegistryCoordinator
+    )
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", AsyncMock())
+    monkeypatch.setattr(
+        hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
+    )
+    assert await async_setup_entry(hass, entry)
+    return entry
+
+
 @pytest.mark.asyncio
 async def test_setup_runtime_data_actions_and_unload(monkeypatch):
     entry = SimpleNamespace(
@@ -171,6 +238,79 @@ async def test_setup_runtime_data_actions_and_unload(monkeypatch):
     await async_unload_entry(hass, entry)
     assert entry.runtime_data is None
     assert not hass.services.handlers
+
+
+@pytest.mark.asyncio
+async def test_refresh_service_registry_awaits_registered_handler(hass, monkeypatch):
+    entry = await _setup_registry_entry(hass, monkeypatch)
+    coordinator = entry.runtime_data.coordinator
+
+    await hass.services.async_call(DOMAIN, SERVICE_REFRESH, {}, blocking=True)
+
+    coordinator.async_request_refresh.assert_awaited_once()
+    await async_unload_entry(hass, entry)
+
+
+@pytest.mark.asyncio
+async def test_dispense_service_registry_awaits_registered_handler(hass, monkeypatch):
+    entry = await _setup_registry_entry(hass, monkeypatch)
+    coordinator = entry.runtime_data.coordinator
+    session = entry.runtime_data.session
+    dose = dt_util.now().isoformat()
+    coordinator.data = {
+        "doses": {
+            "dates": [
+                {
+                    "times": [
+                        {
+                            "scheduled_datetime": dose,
+                            "doses": [{"state": "time_to_take"}],
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    await hass.services.async_call(DOMAIN, SERVICE_DISPENSE, {}, blocking=True)
+
+    coordinator.async_request_refresh.assert_awaited_once()
+    session.async_execute.assert_awaited_once()
+    assert await session.async_last_dispense_id() == dose
+    await async_unload_entry(hass, entry)
+
+
+@pytest.mark.asyncio
+async def test_invalid_dispense_service_registry_surfaces_validation_error(
+    hass, monkeypatch
+):
+    entry = await _setup_registry_entry(hass, monkeypatch)
+
+    with pytest.raises(ServiceValidationError, match="No eligible Hero scheduled dose"):
+        await hass.services.async_call(DOMAIN, SERVICE_DISPENSE, {}, blocking=True)
+
+    assert entry.runtime_data.coordinator.async_request_refresh.await_count == 1
+    await async_unload_entry(hass, entry)
+
+
+@pytest.mark.asyncio
+async def test_service_registry_targets_multiple_entries_and_unloads_last_service(
+    hass, monkeypatch
+):
+    first = await _setup_registry_entry(hass, monkeypatch, "account-1")
+    second = await _setup_registry_entry(hass, monkeypatch, "account-2")
+
+    await hass.services.async_call(
+        DOMAIN, SERVICE_REFRESH, {"entry_id": second.entry_id}, blocking=True
+    )
+
+    assert first.runtime_data.coordinator.async_request_refresh.await_count == 0
+    second.runtime_data.coordinator.async_request_refresh.assert_awaited_once()
+    await async_unload_entry(hass, first)
+    assert hass.services.has_service(DOMAIN, SERVICE_REFRESH)
+    await async_unload_entry(hass, second)
+    assert not hass.services.has_service(DOMAIN, SERVICE_REFRESH)
+    assert not hass.services.has_service(DOMAIN, SERVICE_DISPENSE)
 
 
 @pytest.mark.asyncio

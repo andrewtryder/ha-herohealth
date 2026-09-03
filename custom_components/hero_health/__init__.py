@@ -44,14 +44,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: HeroHealthConfigEntry) -
     entry.runtime_data = HeroHealthRuntimeData(session=session, coordinator=coordinator)
 
     if not hass.services.has_service(DOMAIN, SERVICE_REFRESH):
-        hass.services.async_register(
-            DOMAIN, SERVICE_REFRESH, lambda call: _async_refresh(hass, call)
-        )
+
+        async def handle_refresh(call: ServiceCall) -> None:
+            await _async_refresh(hass, call)
+
+        hass.services.async_register(DOMAIN, SERVICE_REFRESH, handle_refresh)
     if not hass.services.has_service(DOMAIN, SERVICE_DISPENSE):
+
+        async def handle_dispense(call: ServiceCall) -> None:
+            await _async_dispense(hass, call)
+
         hass.services.async_register(
             DOMAIN,
             SERVICE_DISPENSE,
-            lambda call: _async_dispense(hass, call),
+            handle_dispense,
             schema=vol.Schema(
                 {
                     vol.Optional(ATTR_SCHEDULED_DATETIME): str,
