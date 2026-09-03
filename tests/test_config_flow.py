@@ -301,6 +301,8 @@ async def test_reconfigure_selects_new_account(hass, fake_sessions):
     assert result["reason"] == "reconfigure_successful"
     assert entry.data[CONF_ACCOUNT_ID] == "fake-account-2"
     assert entry.unique_id == "fake-account-2"
+    await hass.async_block_till_done()
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.mark.asyncio
