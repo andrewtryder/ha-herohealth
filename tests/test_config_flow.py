@@ -49,6 +49,9 @@ class FakeSession:
             raise self.initialize_error
         return self.client
 
+    async def async_execute(self, operation):
+        return await operation(self.client)
+
     async def async_close(self):
         type(self).closed += 1
 

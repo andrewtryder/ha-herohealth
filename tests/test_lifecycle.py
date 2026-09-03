@@ -21,6 +21,7 @@ from custom_components.hero_health import (
     async_unload_entry,
 )
 from custom_components.hero_health.api.exceptions import (
+    HeroApiError,
     HeroAuthenticationError,
     HeroConnectionError,
     HeroError,
@@ -28,6 +29,56 @@ from custom_components.hero_health.api.exceptions import (
 from custom_components.hero_health.api.models import HeroTokens
 from custom_components.hero_health.coordinator import HeroCoordinator
 from custom_components.hero_health.session import HeroSession
+
+
+class LifecycleClient:
+    """A real-session coordinator client that records its token per call."""
+
+    def __init__(self, access_token="old", auth_failures=0):
+        self.access_token = access_token
+        self.auth_failures = auth_failures
+        self.calls = []
+
+    def set_tokens(self, access_token):
+        self.access_token = access_token
+
+    async def check_hero_offline(self):
+        self.calls.append(("offline", self.access_token))
+        return {"hero_offline": False}
+
+    async def user_status(self):
+        self.calls.append(("status", self.access_token))
+        return {"status": "online"}
+
+    async def last_d2d_config(self):
+        self.calls.append(("config", self.access_token))
+        return {"config": {"pills": []}}
+
+    async def home_screen_doses(self):
+        self.calls.append(("doses", self.access_token))
+        return {"dates": []}
+
+    async def get_home_screen_events(self):
+        self.calls.append(("events", self.access_token))
+        if self.auth_failures:
+            self.auth_failures -= 1
+            raise HeroAuthenticationError("expired")
+        return {}
+
+    async def stats(self, _date):
+        self.calls.append(("stats", self.access_token))
+        return {}
+
+
+def _real_session(client, tokens, auth):
+    session = object.__new__(HeroSession)
+    session._lock = asyncio.Lock()
+    session._tokens = tokens
+    session._persist = False
+    session._email, session._password = "test@example.invalid", "fake-password"
+    session._auth = auth
+    session.client = client
+    return session
 
 
 class FakeServices:
@@ -338,9 +389,11 @@ async def test_coordinator_stats_date_uses_ha_local_timezone(hass, monkeypatch):
         get_home_screen_events=AsyncMock(return_value={}),
         stats=stats_mock,
     )
-    session = SimpleNamespace(
-        client=client_mock, async_initialize=AsyncMock(return_value=client_mock)
-    )
+
+    async def execute(operation):
+        return await operation(client_mock)
+
+    session = SimpleNamespace(async_execute=execute)
     coordinator = HeroCoordinator(hass, entry, session)
     data = await coordinator._async_update_data()
     assert data is not None
@@ -360,8 +413,12 @@ async def test_coordinator_update_data_error_handling(hass):
         get_home_screen_events=AsyncMock(return_value={}),
         stats=AsyncMock(return_value={}),
     )
+
+    async def execute_auth(operation):
+        return await operation(auth_failing_client)
+
     coord_auth = HeroCoordinator(
-        hass, entry, SimpleNamespace(client=auth_failing_client)
+        hass, entry, SimpleNamespace(async_execute=execute_auth)
     )
     with pytest.raises(ConfigEntryAuthFailed):
         await coord_auth._async_update_data()
@@ -375,8 +432,124 @@ async def test_coordinator_update_data_error_handling(hass):
         get_home_screen_events=AsyncMock(return_value={}),
         stats=AsyncMock(return_value={}),
     )
+
+    async def execute_status(operation):
+        return await operation(status_exc_client)
+
     coord_status_exc = HeroCoordinator(
-        hass, entry, SimpleNamespace(client=status_exc_client)
+        hass, entry, SimpleNamespace(async_execute=execute_status)
     )
     with pytest.raises(UpdateFailed):
         await coord_status_exc._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_polling_proactively_refreshes_expired_token(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    client = LifecycleClient()
+    refresh = AsyncMock(
+        return_value=HeroTokens("refreshed", "refresh", 3600, 9999999999)
+    )
+    login = AsyncMock()
+    session = _real_session(
+        client,
+        HeroTokens("expired", "refresh", 1, 0),
+        SimpleNamespace(refresh_access_token=refresh, login_with_password=login),
+    )
+
+    assert await HeroCoordinator(hass, entry, session)._async_update_data()
+    refresh.assert_awaited_once_with("refresh")
+    login.assert_not_awaited()
+    assert {token for _name, token in client.calls} == {"refreshed"}
+
+
+@pytest.mark.asyncio
+async def test_coordinator_polling_does_not_refresh_valid_token(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    client = LifecycleClient()
+    refresh = AsyncMock()
+    login = AsyncMock()
+    session = _real_session(
+        client,
+        HeroTokens("valid", "refresh", 3600, 9999999999),
+        SimpleNamespace(refresh_access_token=refresh, login_with_password=login),
+    )
+
+    assert await HeroCoordinator(hass, entry, session)._async_update_data()
+    refresh.assert_not_awaited()
+    login.assert_not_awaited()
+    assert {token for _name, token in client.calls} == {"old"}
+
+
+@pytest.mark.asyncio
+async def test_coordinator_retries_entire_snapshot_after_endpoint_auth_failure(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    client = LifecycleClient(auth_failures=1)
+    login = AsyncMock(return_value=HeroTokens("recovered", "refresh", 3600, 9999999999))
+    session = _real_session(
+        client,
+        HeroTokens("valid", "refresh", 3600, 9999999999),
+        SimpleNamespace(refresh_access_token=AsyncMock(), login_with_password=login),
+    )
+
+    assert await HeroCoordinator(hass, entry, session)._async_update_data()
+    login.assert_awaited_once_with("test@example.invalid", "fake-password")
+    assert [name for name, _token in client.calls].count("offline") == 2
+    assert {token for _name, token in client.calls if token == "recovered"}
+
+
+@pytest.mark.asyncio
+async def test_coordinator_raises_auth_failed_after_retry_auth_failure(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    client = LifecycleClient(auth_failures=2)
+    session = _real_session(
+        client,
+        HeroTokens("valid", "refresh", 3600, 9999999999),
+        SimpleNamespace(
+            refresh_access_token=AsyncMock(),
+            login_with_password=AsyncMock(
+                return_value=HeroTokens("recovered", "refresh", 3600, 9999999999)
+            ),
+        ),
+    )
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        await HeroCoordinator(hass, entry, session)._async_update_data()
+    assert [name for name, _token in client.calls].count("offline") == 2
+
+
+@pytest.mark.asyncio
+async def test_coordinator_normalizes_non_auth_optional_endpoint_failure(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    client = LifecycleClient()
+    client.get_home_screen_events = AsyncMock(side_effect=HeroApiError("unavailable"))
+    refresh = AsyncMock()
+    login = AsyncMock()
+    session = _real_session(
+        client,
+        HeroTokens("valid", "refresh", 3600, 9999999999),
+        SimpleNamespace(refresh_access_token=refresh, login_with_password=login),
+    )
+
+    data = await HeroCoordinator(hass, entry, session)._async_update_data()
+    assert data["events"] == {}
+    refresh.assert_not_awaited()
+    login.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_session_serializes_concurrent_token_refreshes():
+    client = LifecycleClient()
+    refresh = AsyncMock(
+        return_value=HeroTokens("refreshed", "refresh", 3600, 9999999999)
+    )
+    session = _real_session(
+        client,
+        HeroTokens("expired", "refresh", 1, 0),
+        SimpleNamespace(refresh_access_token=refresh, login_with_password=AsyncMock()),
+    )
+
+    await asyncio.gather(session._async_ensure_tokens(), session._async_ensure_tokens())
+
+    refresh.assert_awaited_once_with("refresh")
+    assert client.access_token == "refreshed"

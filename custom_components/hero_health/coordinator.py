@@ -42,16 +42,7 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
-            client = self.session.client or await self.session.async_initialize()
-            results = await asyncio.gather(
-                client.check_hero_offline(),
-                client.user_status(),
-                client.last_d2d_config(),
-                client.home_screen_doses(),
-                client.get_home_screen_events(),
-                client.stats(dt_util.now().date().isoformat()),
-                return_exceptions=True,
-            )
+            results = await self.session.async_execute(self._async_fetch_snapshot)
             offline, status, config, doses, events, stats = results
             if isinstance(offline, Exception) or isinstance(status, Exception):
                 raise offline if isinstance(offline, Exception) else status
@@ -82,3 +73,19 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise ConfigEntryAuthFailed("Hero authentication required") from err
         except HeroError as err:
             raise UpdateFailed(str(err)) from err
+
+    async def _async_fetch_snapshot(self, client: Any) -> list[Any]:
+        """Fetch one coordinator snapshot under a single auth lifecycle."""
+        results = await asyncio.gather(
+            client.check_hero_offline(),
+            client.user_status(),
+            client.last_d2d_config(),
+            client.home_screen_doses(),
+            client.get_home_screen_events(),
+            client.stats(dt_util.now().date().isoformat()),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, HeroAuthenticationError):
+                raise result
+        return results
