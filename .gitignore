@@ -24,3 +24,4 @@ coverage_html/
 .env.*
 .env.local
 !.env.example
+.tmp/
