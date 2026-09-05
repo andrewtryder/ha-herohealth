@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/andrewtryder/ha-herohealth/compare/v0.2.0...v0.3.0) (2026-09-05)
+
+
+### Features
+
+* hero device metadata and recurring schedule fallback ([#10](https://github.com/andrewtryder/ha-herohealth/issues/10)) ([461b300](https://github.com/andrewtryder/ha-herohealth/commit/461b300b718754eef73af02f3b0d8795e3e68bfc))
+
+
+### Bug Fixes
+
+* close Hero dispense safety gaps ([56aee01](https://github.com/andrewtryder/ha-herohealth/commit/56aee01a3316c8787501ed42ea229c8f1657fb59))
+* harden Hero safety and reliability ([39a03be](https://github.com/andrewtryder/ha-herohealth/commit/39a03be63f22cc33542067c7f0ab487702be7f75))
+* harden Hero safety and reliability ([8c31807](https://github.com/andrewtryder/ha-herohealth/commit/8c3180713f53760fe60c7372257c6465194a731d))
+
 ## [0.2.0](https://github.com/andrewtryder/ha-herohealth/compare/v0.1.2...v0.2.0) (2026-09-03)
 
 
