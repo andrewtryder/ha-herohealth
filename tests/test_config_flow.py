@@ -43,6 +43,7 @@ class FakeClient:
         self.home_screen_doses = AsyncMock(return_value={"dates": []})
         self.get_home_screen_events = AsyncMock(return_value={})
         self.stats = AsyncMock(return_value={})
+        self.pills_by_schedules = AsyncMock(return_value={"schedules": []})
 
     async def caregiver_patient_list(self):
         return self.accounts

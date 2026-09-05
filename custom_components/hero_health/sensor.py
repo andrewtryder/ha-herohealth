@@ -17,6 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from .coordinator import HeroCoordinator
 from .entity import HeroEntity, parse_hero_datetime
+from .schedule import next_recurring_schedule, resolve_schedule_timezone
 
 
 async def async_setup_entry(
@@ -158,4 +159,11 @@ class NextDoseSensor(HeroEntity, SensorEntity):
                                     continue
                                 if parsed >= now:
                                     candidates.append(parsed)
-        return min(candidates) if candidates else None
+        if candidates:
+            return min(candidates)
+
+        schedules = (self.coordinator.data or {}).get("schedules")
+        status = (self.coordinator.data or {}).get("status", {})
+        device_tz = status.get("device_timezone") if isinstance(status, dict) else None
+        target_tz = resolve_schedule_timezone(device_tz)
+        return next_recurring_schedule(schedules, now, target_tz)

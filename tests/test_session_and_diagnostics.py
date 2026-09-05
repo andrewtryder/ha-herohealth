@@ -118,4 +118,80 @@ async def test_diagnostics_redacts_credentials_and_health_data():
     ):
         assert private_value not in rendered
     assert result["coordinator"]["medications"] == {"usable": True, "count": 1}
+    assert result["coordinator"]["schedules"] == {"usable": False}
     assert result["entry"] == {"has_unique_id": False, "scan_interval": 60}
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_privacy_with_sentinels():
+    PRIVATE_SERIAL_SENTINEL = "PRIVATE_SERIAL_XYZ_999"
+    PRIVATE_SCHEDULE_ID_SENTINEL = "PRIVATE_SCHEDULE_ID_ABC_123"
+    PRIVATE_MEDICATION_SENTINEL = "PRIVATE_MEDICATION_LIPITOR_10MG"
+    PRIVATE_TIMESTAMP_SENTINEL = "2026-09-05T12:34:56+00:00"
+    PRIVATE_ACCOUNT_SENTINEL = "PRIVATE_ACCOUNT_ID_77777"
+    PRIVATE_TIMEZONE_SENTINEL = "America/Secret_Zone"
+
+    entry = SimpleNamespace(
+        entry_id="entry_id_123",
+        unique_id=PRIVATE_ACCOUNT_SENTINEL,
+        data={
+            "email": "test@example.invalid",
+            "password": "secret_password",
+            "account_id": PRIVATE_ACCOUNT_SENTINEL,
+        },
+        options={"scan_interval": 30},
+        runtime_data=SimpleNamespace(coordinator=None),
+    )
+    coordinator = SimpleNamespace(
+        last_update_success=True,
+        data={
+            "offline": {"hero_offline": False},
+            "status": {
+                "serial": PRIVATE_SERIAL_SENTINEL,
+                "device_timezone": PRIVATE_TIMEZONE_SENTINEL,
+                "device_manifest": {"family": 1, "model": 1},
+            },
+            "medications": [
+                {"name": PRIVATE_MEDICATION_SENTINEL, "exact_pill_count": 5}
+            ],
+            "doses": {
+                "dates": [
+                    {
+                        "date": "2026-09-05",
+                        "times": [
+                            {
+                                "scheduled_datetime": PRIVATE_TIMESTAMP_SENTINEL,
+                                "doses": [{"name": PRIVATE_MEDICATION_SENTINEL}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            "schedules": {
+                "schedules": [
+                    {
+                        "schedule_id": PRIVATE_SCHEDULE_ID_SENTINEL,
+                        "dow": "Mon",
+                        "time": "08:00",
+                    }
+                ],
+                "pending_changes": False,
+            },
+            "events": {"event_id": "event_123"},
+            "stats": {"stats": {"adherence": 100}},
+        },
+    )
+    entry.runtime_data.coordinator = coordinator
+    result = await async_get_config_entry_diagnostics(SimpleNamespace(), entry)
+
+    import json
+
+    serialized = json.dumps(result)
+
+    assert PRIVATE_SERIAL_SENTINEL not in serialized
+    assert PRIVATE_SCHEDULE_ID_SENTINEL not in serialized
+    assert PRIVATE_MEDICATION_SENTINEL not in serialized
+    assert PRIVATE_TIMESTAMP_SENTINEL not in serialized
+    assert PRIVATE_ACCOUNT_SENTINEL not in serialized
+    assert PRIVATE_TIMEZONE_SENTINEL not in serialized
+    assert result["coordinator"]["schedules"] == {"usable": True}

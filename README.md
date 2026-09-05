@@ -33,6 +33,21 @@ doses taken/missed, next scheduled dose, and slot 1–10 sensors. It also create
 dispenser connectivity binary sensor and a low binary sensor per physical slot.
 Slot entity identity remains stable when medication assignments change.
 
+Physical dispenser metadata is attached to Home Assistant's device registry:
+serial number, model code, and hardware family are extracted from confirmed
+`user-status` fields (`serial`, `device_manifest.model`, `device_manifest.family`).
+Home Assistant device registry identity remains account-based for stability.
+
+The `Next scheduled dose` sensor evaluates Hero's live `home-screen-doses`
+window first. When no future dose remains in that window, it falls back to
+permanent recurring weekly timetable definitions retrieved from `pills-by-schedules`.
+Timetable calculations resolve `device_timezone` from Hero `user-status` (falling
+back to Home Assistant's local timezone). When Hero reports `pending_changes=true`,
+recurring fallback is suppressed. Interval `every_x_days` recurrence is
+deliberately unsupported until an explicit reference anchor date is confirmed.
+The recurring schedule fallback is strictly informational for sensor display:
+it never participates in dispense eligibility, availability, preflight, or selection.
+
 Use a Lovelace entities card with the above entities; no custom card is required.
 
 ## Actions

@@ -46,5 +46,6 @@ async def async_get_config_entry_diagnostics(
             },
             "events": {"usable": isinstance(data.get("events"), dict)},
             "stats": {"usable": isinstance(data.get("stats"), dict)},
+            "schedules": {"usable": isinstance(data.get("schedules"), dict)},
         },
     }
