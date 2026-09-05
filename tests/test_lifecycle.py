@@ -27,6 +27,7 @@ from custom_components.hero_health.api.exceptions import (
     HeroApiError,
     HeroAuthenticationError,
     HeroConnectionError,
+    HeroDispenseOutcomeUnknown,
     HeroError,
     HeroRateLimitError,
 )
@@ -482,6 +483,44 @@ async def test_dispense_aborts_when_immediate_refresh_fails():
 
     assert session.executed.await_count == 0
     assert coordinator.refreshed == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        HeroDispenseOutcomeUnknown("unknown"),
+        HeroConnectionError("offline"),
+        HeroAuthenticationError("expired"),
+    ],
+)
+async def test_dispense_translates_safety_failures(error):
+    class FailingSession(FakeSession):
+        async def async_execute(self, _operation):
+            raise error
+
+    session = FailingSession()
+    entry = SimpleNamespace(entry_id="entry", runtime_data=None)
+    coordinator = FakeCoordinator(None, entry, session)
+    coordinator.data = {
+        "doses": {
+            "dates": [
+                {
+                    "times": [
+                        {
+                            "scheduled_datetime": dt_util.now().isoformat(),
+                            "doses": [{"state": "time_to_take"}],
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    entry.runtime_data = SimpleNamespace(coordinator=coordinator)
+    hass = SimpleNamespace(config_entries=FakeEntries([entry]))
+
+    with pytest.raises(HomeAssistantError):
+        await _async_dispense(hass, SimpleNamespace(data={"config_entry_id": "entry"}))
 
 
 @pytest.mark.asyncio
