@@ -83,6 +83,20 @@ def parse_callback(location: str | None, expected_state: str) -> str:
     return code
 
 
+def validate_login_destination(location: str, expected_base_url: str) -> str:
+    """Ensure credentials are only posted back to Hero's HTTPS login origin."""
+    destination = urlparse(location)
+    expected = urlparse(expected_base_url)
+    if (
+        destination.scheme != "https"
+        or not destination.hostname
+        or destination.hostname.lower() != (expected.hostname or "").lower()
+        or destination.port != expected.port
+    ):
+        raise HeroAuthenticationError("Hero login returned an unexpected destination")
+    return location
+
+
 def _raise_for_status(status: int, headers: Any) -> None:
     if status in (401, 403):
         raise HeroAuthenticationError("Hero authentication was rejected")
@@ -142,7 +156,7 @@ class HeroAuthClient:
                         "Hero login page returned an unexpected response"
                     )
                 post_url, csrf, visitor = (
-                    str(response.url),
+                    validate_login_destination(str(response.url), self._base_url),
                     *parse_login_fields(await response.text()),
                 )
             form = {

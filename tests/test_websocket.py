@@ -7,7 +7,10 @@ import aiohttp
 import pytest
 
 from custom_components.hero_health.api.client import HeroCloudClient
-from custom_components.hero_health.api.exceptions import HeroDispenseError
+from custom_components.hero_health.api.exceptions import (
+    HeroDispenseError,
+    HeroDispenseOutcomeUnknown,
+)
 
 
 class FakeWebSocket:
@@ -106,6 +109,32 @@ async def test_malformed_or_closed_socket_raises():
     client = HeroCloudClient(FakeSession(ws), "token")
     with pytest.raises(HeroDispenseError):
         await client.dispense_scheduled_dose("time")
+
+
+@pytest.mark.asyncio
+async def test_failure_after_start_is_ambiguous_and_notified():
+    ws = FakeWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True},
+                }
+            ),
+        ]
+    )
+    marked = []
+
+    async def mark_start():
+        marked.append(True)
+
+    client = HeroCloudClient(FakeSession(ws), "token")
+    with pytest.raises(HeroDispenseOutcomeUnknown):
+        await client.dispense_scheduled_dose("time", on_start_sent=mark_start)
+    assert marked == [True]
     ws = FakeWebSocket([])
     client = HeroCloudClient(FakeSession(ws), "token")
     with pytest.raises(HeroDispenseError):

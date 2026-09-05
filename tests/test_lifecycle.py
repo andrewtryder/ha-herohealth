@@ -607,6 +607,49 @@ async def test_coordinator_update_data_error_handling(hass):
 
 
 @pytest.mark.asyncio
+async def test_required_dose_failure_does_not_replace_prior_snapshot(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    client = SimpleNamespace(
+        check_hero_offline=AsyncMock(return_value={"hero_offline": False}),
+        user_status=AsyncMock(return_value={}),
+        last_d2d_config=AsyncMock(return_value={"config": {"pills": []}}),
+        home_screen_doses=AsyncMock(side_effect=HeroConnectionError("temporary")),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=AsyncMock(return_value={}),
+    )
+
+    async def execute(operation):
+        return await operation(client)
+
+    coordinator = HeroCoordinator(hass, entry, SimpleNamespace(async_execute=execute))
+    coordinator.data = {"doses": {"dates": [{"times": [{"scheduled_datetime": "x"}]}]}}
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
+    assert coordinator.data["doses"]["dates"]
+
+
+@pytest.mark.asyncio
+async def test_required_dose_rate_limit_is_not_swallowed(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    client = SimpleNamespace(
+        check_hero_offline=AsyncMock(return_value={}),
+        user_status=AsyncMock(return_value={}),
+        last_d2d_config=AsyncMock(return_value={"config": {"pills": []}}),
+        home_screen_doses=AsyncMock(side_effect=HeroRateLimitError(17)),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=AsyncMock(return_value={}),
+    )
+
+    async def execute(operation):
+        return await operation(client)
+
+    coordinator = HeroCoordinator(hass, entry, SimpleNamespace(async_execute=execute))
+    with pytest.raises(UpdateFailed) as err:
+        await coordinator._async_update_data()
+    assert err.value.retry_after == 17
+
+
+@pytest.mark.asyncio
 async def test_coordinator_polling_proactively_refreshes_expired_token(hass):
     entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
     client = LifecycleClient()

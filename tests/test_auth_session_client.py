@@ -10,6 +10,7 @@ from custom_components.hero_health.api.auth import (
     HeroAuthClient,
     parse_callback,
     parse_login_fields,
+    validate_login_destination,
 )
 from custom_components.hero_health.api.client import HeroCloudClient
 from custom_components.hero_health.api.exceptions import (
@@ -133,6 +134,28 @@ def test_callback_validation_accepts_observed_optional_state(location, expected)
 def test_callback_validation_rejects_unexpected_redirects(location):
     with pytest.raises(HeroAuthenticationError):
         parse_callback(location, "expected")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://id.herohealth.com/login/",
+        "https://evil.example/login/",
+        "not a url",
+    ],
+)
+def test_login_destination_rejects_untrusted_origins(url):
+    with pytest.raises(HeroAuthenticationError):
+        validate_login_destination(url, "https://id.herohealth.com")
+
+
+def test_login_destination_accepts_expected_hero_origin():
+    assert (
+        validate_login_destination(
+            "https://id.herohealth.com/login/", "https://id.herohealth.com"
+        )
+        == "https://id.herohealth.com/login/"
+    )
 
 
 @pytest.mark.asyncio

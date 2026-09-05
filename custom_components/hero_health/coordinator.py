@@ -49,8 +49,12 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             results = await self.session.async_execute(self._async_fetch_snapshot)
             offline, status, config, doses, events, stats = results
-            if isinstance(offline, Exception) or isinstance(status, Exception):
-                raise offline if isinstance(offline, Exception) else status
+            # These values form the authoritative snapshot used by entities and
+            # dispensing.  Never turn a transient failure into invented empty
+            # data: DataUpdateCoordinator will retain the last good snapshot.
+            for result in (offline, status, config, doses):
+                if isinstance(result, Exception):
+                    raise result
             pills = (
                 config.get("config", {}).get("pills", [])
                 if isinstance(config, dict)
@@ -71,8 +75,18 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "status": status if isinstance(status, dict) else {},
                 "medications": medications,
                 "doses": doses if isinstance(doses, dict) else {},
-                "events": events if isinstance(events, dict) else {},
-                "stats": stats if isinstance(stats, dict) else {},
+                # Events and statistics are informational. Preserve their last
+                # known values during a partial outage when possible.
+                "events": (
+                    events
+                    if isinstance(events, dict)
+                    else (self.data or {}).get("events", {})
+                ),
+                "stats": (
+                    stats
+                    if isinstance(stats, dict)
+                    else (self.data or {}).get("stats", {})
+                ),
             }
         except HeroAuthenticationError as err:
             raise ConfigEntryAuthFailed("Hero authentication required") from err
@@ -85,6 +99,8 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ) from err
         except HeroError as err:
             raise UpdateFailed(str(err)) from err
+        except Exception as err:
+            raise UpdateFailed("Hero returned an unexpected snapshot") from err
 
     async def _async_fetch_snapshot(self, client: Any) -> list[Any]:
         """Fetch one coordinator snapshot under a single auth lifecycle."""

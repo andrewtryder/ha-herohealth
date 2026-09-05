@@ -97,6 +97,22 @@ def stats_structure(stats: Any) -> list[str]:
     return [f"{key}: {type(value).__name__}" for key, value in sorted(payload.items())]
 
 
+def schema_lines(payload: Any, prefix: str = "") -> list[str]:
+    """Describe JSON shape without ever rendering a remote value."""
+    if isinstance(payload, Mapping):
+        lines = [f"{prefix or '<root>'}: dict"]
+        for key, value in sorted(payload.items(), key=lambda item: str(item[0])):
+            path = f"{prefix}.{key}" if prefix else str(key)
+            lines.extend(schema_lines(value, path))
+        return lines
+    if isinstance(payload, list):
+        lines = [f"{prefix}: list ({len(payload)})"]
+        if payload:
+            lines.extend(schema_lines(payload[0], f"{prefix}[]"))
+        return lines
+    return [f"{prefix}: {type(payload).__name__}"]
+
+
 async def async_run() -> list[str]:
     """Authenticate and run only approved read-only Hero REST calls."""
     email = os.environ.get("HERO_EMAIL")
@@ -112,11 +128,12 @@ async def async_run() -> list[str]:
             accounts, os.environ.get("HERO_ACCOUNT_ID")
         )
 
-        await client.check_hero_offline()
-        await client.user_status()
+        offline = await client.check_hero_offline()
+        status = await client.user_status()
         config = await client.last_d2d_config()
         doses = await client.home_screen_doses()
-        await client.get_home_screen_events()
+        schedules = await client.pills_by_schedules()
+        events = await client.get_home_screen_events()
         stats = await client.stats(date.today().isoformat())
 
     slots, configured_slots, dose_groups = structural_counts(config, doses)
@@ -131,10 +148,18 @@ async def async_run() -> list[str]:
         "Stats: OK",
         "Read-only smoke test completed successfully.",
     ]
-    if os.environ.get("HERO_SMOKE_STRUCTURE") == "1":
-        report.extend(
-            ["Stats fields:", *[f"  {field}" for field in stats_structure(stats)]]
-        )
+    if os.environ.get("HERO_SMOKE_SCHEMA") == "1":
+        for label, payload in (
+            ("offline", offline),
+            ("user_status", status),
+            ("last_d2d_config", config),
+            ("home_screen_doses", doses),
+            ("pills_by_schedules", schedules),
+            ("events", events),
+            ("stats", stats),
+        ):
+            report.append(f"{label}:")
+            report.extend(f"  {line}" for line in schema_lines(payload))
     return report
 
 

@@ -75,11 +75,14 @@ async def test_diagnostics_redacts_credentials_and_health_data():
     entry.runtime_data.coordinator = coordinator
     hass = SimpleNamespace()
     result = await async_get_config_entry_diagnostics(hass, entry)
-    assert result["entry"] == {
-        "email": "**REDACTED**",
-        "password": "**REDACTED**",
-        "account_id": "**REDACTED**",
-    }
-    assert result["coordinator"]["medications"] == "**REDACTED**"
-    assert result["coordinator"]["access_token"] == "**REDACTED**"
-    assert result["coordinator"]["device_nickname"] == "**REDACTED**"
+    rendered = repr(result)
+    for private_value in (
+        "test@example.invalid",
+        "secret",
+        "account",
+        "Example medication",
+        "token",
+        "Bedroom",
+    ):
+        assert private_value not in rendered
+    assert result["coordinator"]["medications"] == {"usable": True, "count": 1}

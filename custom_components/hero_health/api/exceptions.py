@@ -27,3 +27,7 @@ class HeroApiError(HeroError):
 
 class HeroDispenseError(HeroError):
     """A safety-sensitive dispensing operation failed."""
+
+
+class HeroDispenseOutcomeUnknown(HeroDispenseError):
+    """A start command was sent but Hero did not confirm the final outcome."""

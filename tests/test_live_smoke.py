@@ -60,6 +60,7 @@ async def test_async_run_uses_only_approved_read_only_calls(monkeypatch):
             self.user_status = AsyncMock(return_value={})
             self.last_d2d_config = AsyncMock(return_value={"config": {"pills": []}})
             self.home_screen_doses = AsyncMock(return_value={"dates": []})
+            self.pills_by_schedules = AsyncMock(return_value={})
             self.get_home_screen_events = AsyncMock(return_value={})
             self.stats = AsyncMock(return_value={})
 
@@ -93,7 +94,19 @@ async def test_async_run_uses_only_approved_read_only_calls(monkeypatch):
     assert client.user_status.await_count == 1
     assert client.last_d2d_config.await_count == 1
     assert client.home_screen_doses.await_count == 1
+    assert client.pills_by_schedules.await_count == 1
     assert client.get_home_screen_events.await_count == 1
     assert client.stats.await_count == 1
     assert report[-1] == "Read-only smoke test completed successfully."
     assert "private-token" not in "\n".join(report)
+
+
+def test_schema_lines_never_render_private_values():
+    report = "\n".join(
+        live_smoke.schema_lines(
+            {"device": {"serial": "private-serial"}, "name": "private-med"}
+        )
+    )
+    assert "private-serial" not in report
+    assert "private-med" not in report
+    assert "device.serial: str" in report

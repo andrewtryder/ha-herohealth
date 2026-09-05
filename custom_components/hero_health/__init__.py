@@ -14,7 +14,11 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import config_validation as cv
 from homeassistant.util import dt as dt_util
 
-from .api.exceptions import HeroAuthenticationError, HeroConnectionError
+from .api.exceptions import (
+    HeroAuthenticationError,
+    HeroConnectionError,
+    HeroDispenseOutcomeUnknown,
+)
 from .const import (
     ATTR_SCHEDULED_DATETIME,
     DOMAIN,
@@ -111,16 +115,37 @@ async def _async_dispense(hass: HomeAssistant, call: ServiceCall) -> None:
             )
         selected = evaluation.scheduled_datetime
         last_id = await coordinator.session.async_last_dispense_id()
-        if last_id == selected:
+        unknown_check = getattr(
+            coordinator.session, "async_dispense_outcome_unknown", None
+        )
+        unknown = await unknown_check(selected) if unknown_check else False
+        if last_id == selected or unknown:
             raise ServiceValidationError(
-                "This scheduled dose was already dispensed recently",
+                (
+                    "The result of this scheduled dose is unknown; confirm the "
+                    "dispenser state before trying again"
+                    if unknown
+                    else "This scheduled dose was already dispensed recently"
+                ),
                 translation_domain=DOMAIN,
                 translation_key="duplicate_recent_dose",
             )
         try:
             await coordinator.session.async_execute(
-                lambda client: client.dispense_scheduled_dose(selected)
+                lambda client: client.dispense_scheduled_dose(
+                    selected,
+                    on_start_sent=(
+                        lambda: coordinator.session.async_mark_dispense_start_sent(
+                            selected
+                        )
+                    ),
+                )
             )
+        except HeroDispenseOutcomeUnknown as err:
+            raise HomeAssistantError(
+                "Hero may have started dispensing but did not confirm completion; "
+                "do not retry this dose automatically"
+            ) from err
         except HeroConnectionError as err:
             raise HomeAssistantError(
                 "Unable to connect to Hero during the action",
