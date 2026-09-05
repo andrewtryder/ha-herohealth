@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -94,19 +95,39 @@ async def test_async_run_uses_only_approved_read_only_calls(monkeypatch):
     assert client.user_status.await_count == 1
     assert client.last_d2d_config.await_count == 1
     assert client.home_screen_doses.await_count == 1
-    assert client.pills_by_schedules.await_count == 1
+    assert client.pills_by_schedules.await_count == (
+        1 if os.environ.get("HERO_SMOKE_SCHEMA") == "1" else 0
+    )
     assert client.get_home_screen_events.await_count == 1
     assert client.stats.await_count == 1
-    assert report[-1] == "Read-only smoke test completed successfully."
+    assert "Read-only smoke test completed successfully." in report
     assert "private-token" not in "\n".join(report)
 
 
-def test_schema_lines_never_render_private_values():
+def test_schema_lines_never_render_private_values_or_keys():
     report = "\n".join(
         live_smoke.schema_lines(
-            {"device": {"serial": "private-serial"}, "name": "private-med"}
+            {
+                "device": {"serial": "private-serial"},
+                "private-key": {"name": "private-med"},
+            }
         )
     )
     assert "private-serial" not in report
     assert "private-med" not in report
+    assert "private-key" not in report
     assert "device.serial: str" in report
+
+
+def test_schema_lines_inspect_all_list_entries():
+    report = "\n".join(
+        live_smoke.schema_lines([{"config": {}}, {"device": {"model": "x"}}])
+    )
+    assert "[].config: dict" in report
+    assert "[].device.model: str" in report
+
+
+@pytest.mark.asyncio
+async def test_schema_mode_calls_schedule_endpoint(monkeypatch):
+    monkeypatch.setenv("HERO_SMOKE_SCHEMA", "1")
+    await test_async_run_uses_only_approved_read_only_calls(monkeypatch)

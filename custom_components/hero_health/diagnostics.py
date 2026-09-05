@@ -15,11 +15,6 @@ async def async_get_config_entry_diagnostics(
     coordinator = entry.runtime_data.coordinator
     data = coordinator.data or {}
 
-    def mapping_summary(value: Any) -> dict[str, Any]:
-        if not isinstance(value, dict):
-            return {"usable": False, "type": type(value).__name__}
-        return {"usable": True, "keys": sorted(str(key) for key in value)[:20]}
-
     doses = data.get("doses")
     dates = doses.get("dates", []) if isinstance(doses, dict) else []
     slot_count = sum(
@@ -28,21 +23,28 @@ async def async_get_config_entry_diagnostics(
         if isinstance(day, dict) and isinstance(day.get("times"), list)
     )
     medications = data.get("medications")
+    options = getattr(entry, "options", {})
+    scan_interval = options.get("scan_interval") if isinstance(options, dict) else None
     return {
         "entry": {
             "has_unique_id": bool(getattr(entry, "unique_id", None)),
-            "options": dict(getattr(entry, "options", {})),
+            "scan_interval": (
+                scan_interval
+                if isinstance(scan_interval, int)
+                and not isinstance(scan_interval, bool)
+                else None
+            ),
         },
         "coordinator": {
             "last_update_success": getattr(coordinator, "last_update_success", None),
-            "offline": mapping_summary(data.get("offline")),
-            "status": mapping_summary(data.get("status")),
+            "offline": {"usable": isinstance(data.get("offline"), dict)},
+            "status": {"usable": isinstance(data.get("status"), dict)},
             "doses": {"usable": isinstance(doses, dict), "slot_count": slot_count},
             "medications": {
                 "usable": isinstance(medications, list),
                 "count": len(medications) if isinstance(medications, list) else 0,
             },
-            "events": mapping_summary(data.get("events")),
-            "stats": mapping_summary(data.get("stats")),
+            "events": {"usable": isinstance(data.get("events"), dict)},
+            "stats": {"usable": isinstance(data.get("stats"), dict)},
         },
     }

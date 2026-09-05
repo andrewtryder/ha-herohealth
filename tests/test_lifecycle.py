@@ -8,6 +8,7 @@ import pytest
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
+    HomeAssistantError,
     ServiceValidationError,
 )
 from homeassistant.helpers.update_coordinator import UpdateFailed
@@ -142,6 +143,12 @@ class FakeSession:
     async def async_save_dispense_id(self, value):
         self.last = value
 
+    async def async_mark_dispense_start_sent(self, _value):
+        return None
+
+    async def async_dispense_outcome_unknown(self, _value):
+        return False
+
     async def async_execute(self, operation):
         self.executed = await operation(
             SimpleNamespace(dispense_scheduled_dose=AsyncMock())
@@ -154,11 +161,15 @@ class FakeCoordinator:
         self.dispense_lock = asyncio.Lock()
         self.data = {"doses": {"dates": []}}
         self.refreshed = 0
+        self.last_update_success = True
 
     async def async_config_entry_first_refresh(self):
         self.refreshed += 1
 
     async def async_request_refresh(self):
+        self.refreshed += 1
+
+    async def async_refresh(self):
         self.refreshed += 1
 
 
@@ -183,6 +194,12 @@ class RegistrySession:
     async def async_save_dispense_id(self, identifier):
         self.last = identifier
 
+    async def async_mark_dispense_start_sent(self, _value):
+        return None
+
+    async def async_dispense_outcome_unknown(self, _value):
+        return False
+
     async def async_close(self):
         return None
 
@@ -194,6 +211,8 @@ class RegistryCoordinator:
         self.data = {"doses": {"dates": []}}
         self.first_refresh = AsyncMock()
         self.async_request_refresh = AsyncMock()
+        self.async_refresh = AsyncMock()
+        self.last_update_success = True
 
     async def async_config_entry_first_refresh(self):
         await self.first_refresh()
@@ -286,7 +305,7 @@ async def test_dispense_service_registry_awaits_registered_handler(hass, monkeyp
         DOMAIN, SERVICE_DISPENSE, {"config_entry_id": entry.entry_id}, blocking=True
     )
 
-    coordinator.async_request_refresh.assert_awaited_once()
+    coordinator.async_refresh.assert_awaited_once()
     session.async_execute.assert_awaited_once()
     assert await session.async_last_dispense_id() == dose
     await async_unload_entry(hass, entry)
@@ -306,7 +325,7 @@ async def test_invalid_dispense_service_registry_surfaces_validation_error(
             blocking=True,
         )
 
-    assert entry.runtime_data.coordinator.async_request_refresh.await_count == 1
+    assert entry.runtime_data.coordinator.async_refresh.await_count == 1
     await async_unload_entry(hass, entry)
 
 
@@ -433,6 +452,36 @@ async def test_dispense_action_executes_one_eligible_dose_and_deduplicates():
     assert session.last == dose
     with pytest.raises(ServiceValidationError, match="already dispensed"):
         await _async_dispense(hass, SimpleNamespace(data={"config_entry_id": "entry"}))
+
+
+@pytest.mark.asyncio
+async def test_dispense_aborts_when_immediate_refresh_fails():
+    session = FakeSession()
+    entry = SimpleNamespace(entry_id="entry", runtime_data=None)
+    coordinator = FakeCoordinator(None, entry, session)
+    coordinator.last_update_success = False
+    coordinator.data = {
+        "doses": {
+            "dates": [
+                {
+                    "times": [
+                        {
+                            "scheduled_datetime": dt_util.now().isoformat(),
+                            "doses": [{"state": "time_to_take"}],
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    entry.runtime_data = SimpleNamespace(coordinator=coordinator)
+    hass = SimpleNamespace(config_entries=FakeEntries([entry]))
+
+    with pytest.raises(HomeAssistantError, match="Unable to confirm"):
+        await _async_dispense(hass, SimpleNamespace(data={"config_entry_id": "entry"}))
+
+    assert session.executed.await_count == 0
+    assert coordinator.refreshed == 1
 
 
 @pytest.mark.asyncio
@@ -647,6 +696,28 @@ async def test_required_dose_rate_limit_is_not_swallowed(hass):
     with pytest.raises(UpdateFailed) as err:
         await coordinator._async_update_data()
     assert err.value.retry_after == 17
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_doses", [None, [], {"dates": {}}])
+async def test_malformed_required_doses_fail_snapshot(hass, bad_doses):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    client = SimpleNamespace(
+        check_hero_offline=AsyncMock(return_value={}),
+        user_status=AsyncMock(return_value={}),
+        last_d2d_config=AsyncMock(return_value={"config": {"pills": []}}),
+        home_screen_doses=AsyncMock(return_value=bad_doses),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=AsyncMock(return_value={}),
+    )
+
+    async def execute(operation):
+        return await operation(client)
+
+    with pytest.raises(UpdateFailed):
+        await HeroCoordinator(
+            hass, entry, SimpleNamespace(async_execute=execute)
+        )._async_update_data()
 
 
 @pytest.mark.asyncio

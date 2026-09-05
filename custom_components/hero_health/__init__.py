@@ -95,7 +95,15 @@ async def _async_refresh(hass: HomeAssistant, call: ServiceCall) -> None:
 async def _async_dispense(hass: HomeAssistant, call: ServiceCall) -> None:
     coordinator = _coordinator_for_call(hass, call)
     async with coordinator.dispense_lock:
-        await coordinator.async_request_refresh()
+        # This action must never rely on a debounced refresh or stale snapshot.
+        await coordinator.async_refresh()
+        if not coordinator.last_update_success:
+            raise HomeAssistantError(
+                "Unable to confirm current Hero dose state; "
+                "dispensing was not attempted",
+                translation_domain=DOMAIN,
+                translation_key="dose_state_unavailable",
+            )
         requested = call.data.get(ATTR_SCHEDULED_DATETIME)
         evaluation = evaluate_dispense_eligibility(
             coordinator.data.get("doses"), dt_util.now(), requested
@@ -128,7 +136,9 @@ async def _async_dispense(hass: HomeAssistant, call: ServiceCall) -> None:
                     else "This scheduled dose was already dispensed recently"
                 ),
                 translation_domain=DOMAIN,
-                translation_key="duplicate_recent_dose",
+                translation_key=(
+                    "dispense_outcome_unknown" if unknown else "duplicate_recent_dose"
+                ),
             )
         try:
             await coordinator.session.async_execute(
@@ -144,7 +154,9 @@ async def _async_dispense(hass: HomeAssistant, call: ServiceCall) -> None:
         except HeroDispenseOutcomeUnknown as err:
             raise HomeAssistantError(
                 "Hero may have started dispensing but did not confirm completion; "
-                "do not retry this dose automatically"
+                "do not retry this dose automatically",
+                translation_domain=DOMAIN,
+                translation_key="dispense_outcome_unknown",
             ) from err
         except HeroConnectionError as err:
             raise HomeAssistantError(

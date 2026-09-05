@@ -55,6 +55,27 @@ async def test_expired_token_refresh_is_serialized_and_preserves_refresh_token()
 
 
 @pytest.mark.asyncio
+async def test_dispense_ambiguity_persists_and_completion_clears_it():
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._tokens = HeroTokens("access", "refresh", 3600, time.time())
+    session._identity = {"email": "user@example.invalid", "account_id": "account"}
+    session._store = FakeStore()
+    session._state_lock = asyncio.Lock()
+
+    await session.async_mark_dispense_start_sent("scheduled")
+    assert await session.async_dispense_outcome_unknown("scheduled")
+    assert session._store.data["dispense_attempt"] == {
+        "state": "outcome_unknown",
+        "scheduled_datetime": "scheduled",
+    }
+
+    await session.async_save_dispense_id("scheduled")
+    assert not await session.async_dispense_outcome_unknown("scheduled")
+    assert "dispense_attempt" not in session._store.data
+
+
+@pytest.mark.asyncio
 async def test_diagnostics_redacts_credentials_and_health_data():
     entry = SimpleNamespace(
         entry_id="entry",
@@ -63,6 +84,7 @@ async def test_diagnostics_redacts_credentials_and_health_data():
             "password": "secret",
             "account_id": "account",
         },
+        options={"scan_interval": 60, "future_secret": "private-option"},
         runtime_data=SimpleNamespace(coordinator=None),
     )
     coordinator = SimpleNamespace(
@@ -70,6 +92,10 @@ async def test_diagnostics_redacts_credentials_and_health_data():
             "medications": [{"name": "Example medication", "exact_pill_count": 3}],
             "access_token": "token",
             "device_nickname": "Bedroom",
+            "doses": {"private-dose-time": {"private-device-id": "private"}},
+            "events": {"private-event": "private"},
+            "stats": {"private-stat": "private"},
+            "status": {"serial_number": "private-serial"},
         }
     )
     entry.runtime_data.coordinator = coordinator
@@ -83,6 +109,13 @@ async def test_diagnostics_redacts_credentials_and_health_data():
         "Example medication",
         "token",
         "Bedroom",
+        "private-option",
+        "private-dose-time",
+        "private-device-id",
+        "private-event",
+        "private-stat",
+        "private-serial",
     ):
         assert private_value not in rendered
     assert result["coordinator"]["medications"] == {"usable": True, "count": 1}
+    assert result["entry"] == {"has_unique_id": False, "scan_interval": 60}

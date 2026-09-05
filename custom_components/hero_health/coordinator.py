@@ -55,11 +55,24 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for result in (offline, status, config, doses):
                 if isinstance(result, Exception):
                     raise result
-            pills = (
-                config.get("config", {}).get("pills", [])
-                if isinstance(config, dict)
-                else []
-            )
+            required = {
+                "offline": offline,
+                "status": status,
+                "config": config,
+                "doses": doses,
+            }
+            for name, value in required.items():
+                if not isinstance(value, dict):
+                    raise HeroError(f"Hero returned invalid {name} data")
+            if not isinstance(config.get("config"), dict):
+                raise HeroError("Hero returned invalid config data")
+            if "pills" in config["config"] and not isinstance(
+                config["config"]["pills"], list
+            ):
+                raise HeroError("Hero returned invalid config data")
+            if "dates" in doses and not isinstance(doses["dates"], list):
+                raise HeroError("Hero returned invalid doses data")
+            pills = config["config"].get("pills", [])
             medications = [
                 {
                     **pill,
@@ -71,10 +84,10 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if isinstance(pill, dict)
             ]
             return {
-                "offline": offline if isinstance(offline, dict) else {},
-                "status": status if isinstance(status, dict) else {},
+                "offline": offline,
+                "status": status,
                 "medications": medications,
-                "doses": doses if isinstance(doses, dict) else {},
+                "doses": doses,
                 # Events and statistics are informational. Preserve their last
                 # known values during a partial outage when possible.
                 "events": (

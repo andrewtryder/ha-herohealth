@@ -215,6 +215,11 @@ class HeroCloudClient:
                                 raise HeroDispenseError(
                                     "Hero preflight check rejected dispensing"
                                 )
+                            # A failed send may still have reached Hero. Persist
+                            # first so an interruption can never permit a retry.
+                            if on_start_sent:
+                                await on_start_sent()
+                            start_sent = True
                             await ws.send_json(
                                 {
                                     "type": "dispense_frontend_start",
@@ -225,9 +230,6 @@ class HeroCloudClient:
                                     },
                                 }
                             )
-                            start_sent = True
-                            if on_start_sent:
-                                await on_start_sent()
                         elif kind == "dispense_frontend_message" and body.get(
                             "message"
                         ):

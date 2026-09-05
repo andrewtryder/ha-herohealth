@@ -85,13 +85,19 @@ def parse_callback(location: str | None, expected_state: str) -> str:
 
 def validate_login_destination(location: str, expected_base_url: str) -> str:
     """Ensure credentials are only posted back to Hero's HTTPS login origin."""
-    destination = urlparse(location)
-    expected = urlparse(expected_base_url)
+    destination, expected = urlparse(location), urlparse(expected_base_url)
+    try:
+        destination_port = destination.port or 443
+        expected_port = expected.port or 443
+    except ValueError as err:
+        raise HeroAuthenticationError(
+            "Hero login returned an unexpected destination"
+        ) from err
     if (
         destination.scheme != "https"
         or not destination.hostname
         or destination.hostname.lower() != (expected.hostname or "").lower()
-        or destination.port != expected.port
+        or destination_port != expected_port
     ):
         raise HeroAuthenticationError("Hero login returned an unexpected destination")
     return location
