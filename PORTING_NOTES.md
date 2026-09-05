@@ -19,6 +19,11 @@ messages are isolated under `custom_components/hero_health/api/`. They were deri
 from observed mobile-app traffic and can change without notice. Unlike the Worker,
 the integration uses a normal `wss://` aiohttp WebSocket transport.
 
+Protocol discovery must use the read-only `HERO_SMOKE_SCHEMA=1 scripts/live-smoke`
+tool. It reports response shape only and must never be extended to invoke dispense
+or any mutation endpoint. The observed Android protocol header values are retained
+in `api/client.py` intentionally until new read-only evidence shows they changed.
+
 The Worker explicit-account query-string bug is corrected: account selection is sent
 only as `x-hero-account`. Naive Hero timestamps are interpreted in Home Assistant's
 configured local timezone; offset-bearing timestamps retain their offsets.

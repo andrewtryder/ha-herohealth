@@ -10,6 +10,7 @@ from custom_components.hero_health.api.auth import (
     HeroAuthClient,
     parse_callback,
     parse_login_fields,
+    validate_login_destination,
 )
 from custom_components.hero_health.api.client import HeroCloudClient
 from custom_components.hero_health.api.exceptions import (
@@ -135,6 +136,54 @@ def test_callback_validation_rejects_unexpected_redirects(location):
         parse_callback(location, "expected")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://id.herohealth.com/login/",
+        "https://evil.example/login/",
+        "not a url",
+    ],
+)
+def test_login_destination_rejects_untrusted_origins(url):
+    with pytest.raises(HeroAuthenticationError):
+        validate_login_destination(url, "https://id.herohealth.com")
+
+
+def test_login_destination_accepts_expected_hero_origin():
+    assert (
+        validate_login_destination(
+            "https://id.herohealth.com/login/", "https://id.herohealth.com"
+        )
+        == "https://id.herohealth.com/login/"
+    )
+
+
+def test_login_destination_normalizes_default_https_port():
+    assert (
+        validate_login_destination(
+            "https://id.herohealth.com:443/login/", "https://id.herohealth.com"
+        )
+        == "https://id.herohealth.com:443/login/"
+    )
+
+
+@pytest.mark.asyncio
+async def test_malicious_login_redirect_never_receives_credentials():
+    http = Http(
+        [
+            Response(
+                text='<input name="csrfmiddlewaretoken" value="csrf">',
+                url="https://evil.example/login/",
+            )
+        ]
+    )
+    with pytest.raises(HeroAuthenticationError):
+        await HeroAuthClient(http).login_with_password(
+            "test@example.invalid", "fake-password"
+        )
+    assert [call[0] for call in http.calls] == ["get"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status", "error"),
@@ -216,6 +265,10 @@ async def test_persisted_tokens_are_bound_to_normalized_identity():
             return_value={
                 "tokens": tokens.as_dict(),
                 "last_dispense_id": "dose",
+                "dispense_attempt": {
+                    "state": "outcome_unknown",
+                    "scheduled_datetime": "ambiguous-dose",
+                },
                 "identity": {"email": "user@example.invalid", "account_id": "account"},
             }
         ),
@@ -238,6 +291,7 @@ async def test_persisted_tokens_are_bound_to_normalized_identity():
     assert session._tokens.access_token == "cached"
     session._auth.login_with_password.assert_not_awaited()
     assert await session.async_last_dispense_id() == "dose"
+    assert await session.async_dispense_outcome_unknown("ambiguous-dose")
 
 
 @pytest.mark.asyncio

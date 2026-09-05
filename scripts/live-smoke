@@ -33,5 +33,8 @@ export HERO_EMAIL HERO_PASSWORD
 if [ -n "${HERO_ACCOUNT_ID:-}" ]; then
   export HERO_ACCOUNT_ID
 fi
+if [ "${HERO_SMOKE_SCHEMA:-}" = "1" ]; then
+  export HERO_SMOKE_SCHEMA
+fi
 cd "$ROOT"
 exec "$PYTHON" scripts/live_smoke.py

@@ -49,13 +49,30 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             results = await self.session.async_execute(self._async_fetch_snapshot)
             offline, status, config, doses, events, stats = results
-            if isinstance(offline, Exception) or isinstance(status, Exception):
-                raise offline if isinstance(offline, Exception) else status
-            pills = (
-                config.get("config", {}).get("pills", [])
-                if isinstance(config, dict)
-                else []
-            )
+            # These values form the authoritative snapshot used by entities and
+            # dispensing.  Never turn a transient failure into invented empty
+            # data: DataUpdateCoordinator will retain the last good snapshot.
+            for result in (offline, status, config, doses):
+                if isinstance(result, Exception):
+                    raise result
+            required = {
+                "offline": offline,
+                "status": status,
+                "config": config,
+                "doses": doses,
+            }
+            for name, value in required.items():
+                if not isinstance(value, dict):
+                    raise HeroError(f"Hero returned invalid {name} data")
+            if not isinstance(config.get("config"), dict):
+                raise HeroError("Hero returned invalid config data")
+            if "pills" in config["config"] and not isinstance(
+                config["config"]["pills"], list
+            ):
+                raise HeroError("Hero returned invalid config data")
+            if "dates" in doses and not isinstance(doses["dates"], list):
+                raise HeroError("Hero returned invalid doses data")
+            pills = config["config"].get("pills", [])
             medications = [
                 {
                     **pill,
@@ -67,12 +84,22 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if isinstance(pill, dict)
             ]
             return {
-                "offline": offline if isinstance(offline, dict) else {},
-                "status": status if isinstance(status, dict) else {},
+                "offline": offline,
+                "status": status,
                 "medications": medications,
-                "doses": doses if isinstance(doses, dict) else {},
-                "events": events if isinstance(events, dict) else {},
-                "stats": stats if isinstance(stats, dict) else {},
+                "doses": doses,
+                # Events and statistics are informational. Preserve their last
+                # known values during a partial outage when possible.
+                "events": (
+                    events
+                    if isinstance(events, dict)
+                    else (self.data or {}).get("events", {})
+                ),
+                "stats": (
+                    stats
+                    if isinstance(stats, dict)
+                    else (self.data or {}).get("stats", {})
+                ),
             }
         except HeroAuthenticationError as err:
             raise ConfigEntryAuthFailed("Hero authentication required") from err
@@ -85,6 +112,8 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ) from err
         except HeroError as err:
             raise UpdateFailed(str(err)) from err
+        except Exception as err:
+            raise UpdateFailed("Hero returned an unexpected snapshot") from err
 
     async def _async_fetch_snapshot(self, client: Any) -> list[Any]:
         """Fetch one coordinator snapshot under a single auth lifecycle."""

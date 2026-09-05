@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import aiohttp
@@ -13,6 +14,7 @@ from .exceptions import (
     HeroAuthenticationError,
     HeroConnectionError,
     HeroDispenseError,
+    HeroDispenseOutcomeUnknown,
     HeroRateLimitError,
 )
 
@@ -136,18 +138,25 @@ class HeroCloudClient:
         return await self._request("/frontend/insights/milestones-list/")
 
     async def dispense_scheduled_dose(
-        self, scheduled_datetime: str, timeout_seconds: float = 30
+        self,
+        scheduled_datetime: str,
+        timeout_seconds: float = 30,
+        on_start_sent: Callable[[], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         """Complete only after Hero's completion event, never the started event."""
         async with self._dispense_lock:
             return await self._async_dispense_scheduled_dose(
-                scheduled_datetime, timeout_seconds
+                scheduled_datetime, timeout_seconds, on_start_sent
             )
 
     async def _async_dispense_scheduled_dose(
-        self, scheduled_datetime: str, timeout_seconds: float
+        self,
+        scheduled_datetime: str,
+        timeout_seconds: float,
+        on_start_sent: Callable[[], Awaitable[None]] | None,
     ) -> dict[str, Any]:
         headers = self._headers()
+        start_sent = False
         try:
             async with self._session.ws_connect(
                 f"{self._base_url.replace('https://', 'wss://')}/ws/frontend/",
@@ -206,6 +215,11 @@ class HeroCloudClient:
                                 raise HeroDispenseError(
                                     "Hero preflight check rejected dispensing"
                                 )
+                            # A failed send may still have reached Hero. Persist
+                            # first so an interruption can never permit a retry.
+                            if on_start_sent:
+                                await on_start_sent()
+                            start_sent = True
                             await ws.send_json(
                                 {
                                     "type": "dispense_frontend_start",
@@ -223,7 +237,7 @@ class HeroCloudClient:
                         elif kind == "request_ping":
                             await ws.send_json({"type": "response_ping"})
                         elif kind == "dispense_frontend_completed":
-                            if body.get("status", True) is not True:
+                            if body.get("status") is not True:
                                 raise HeroDispenseError(
                                     "Hero reported dispense failure"
                                 )
@@ -232,10 +246,29 @@ class HeroCloudClient:
                                 "status": "completed",
                                 "messages": messages,
                             }
+                if start_sent:
+                    raise HeroDispenseOutcomeUnknown(
+                        "Hero WebSocket closed after dispense started"
+                    )
                 raise HeroDispenseError(
                     "Hero WebSocket closed before dispense completed"
                 )
+        except HeroDispenseOutcomeUnknown:
+            raise
+        except HeroDispenseError as err:
+            if start_sent:
+                raise HeroDispenseOutcomeUnknown(
+                    "Hero returned an invalid result after dispense started"
+                ) from err
+            raise
         except TimeoutError as err:
-            raise HeroDispenseError("Dispense action timed out") from err
+            error = "Dispense action timed out"
+            if start_sent:
+                raise HeroDispenseOutcomeUnknown(error) from err
+            raise HeroDispenseError(error) from err
         except aiohttp.ClientError as err:
+            if start_sent:
+                raise HeroDispenseOutcomeUnknown(
+                    "Hero connection closed after dispense started"
+                ) from err
             raise HeroConnectionError("Unable to connect to Hero dispenser") from err

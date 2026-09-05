@@ -50,6 +50,7 @@ class HeroSession:
         self._auth = HeroAuthClient(self._http)
         self._tokens: HeroTokens | None = None
         self._last_dispense_id: str | None = None
+        self._dispense_attempt: dict[str, str] | None = None
         self.client: HeroCloudClient | None = None
         self._lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
@@ -72,6 +73,15 @@ class HeroSession:
             if identity_matches and isinstance(last_dispense_id, str)
             else None
         )
+        attempt = saved.get("dispense_attempt") if isinstance(saved, dict) else None
+        self._dispense_attempt = (
+            attempt
+            if identity_matches
+            and isinstance(attempt, dict)
+            and attempt.get("state") == "outcome_unknown"
+            and isinstance(attempt.get("scheduled_datetime"), str)
+            else None
+        )
         await self._async_ensure_tokens()
         assert self._tokens
         self.client = HeroCloudClient(
@@ -92,6 +102,8 @@ class HeroSession:
                 state["identity"] = self._current_identity()
             if last_dispense_id := getattr(self, "_last_dispense_id", None):
                 state["last_dispense_id"] = last_dispense_id
+            if attempt := getattr(self, "_dispense_attempt", None):
+                state["dispense_attempt"] = attempt
             await self._store.async_save(state)
 
     def _current_identity(self) -> dict[str, str]:
@@ -159,12 +171,37 @@ class HeroSession:
         if not self._persist:
             return
         self._last_dispense_id = identifier
+        attempt = getattr(self, "_dispense_attempt", None)
+        if (
+            isinstance(attempt, dict)
+            and attempt.get("scheduled_datetime") == identifier
+        ):
+            self._dispense_attempt = None
         await self._async_save_state()
 
     async def async_last_dispense_id(self) -> str | None:
         if not self._persist:
             return None
         return getattr(self, "_last_dispense_id", None)
+
+    async def async_mark_dispense_start_sent(self, scheduled_datetime: str) -> None:
+        """Persist ambiguity before waiting for the device completion event."""
+        if not self._persist:
+            return
+        self._dispense_attempt = {
+            "state": "outcome_unknown",
+            "scheduled_datetime": scheduled_datetime,
+        }
+        await self._async_save_state()
+
+    async def async_dispense_outcome_unknown(self, scheduled_datetime: str) -> bool:
+        attempt = getattr(self, "_dispense_attempt", None)
+        return bool(
+            self._persist
+            and isinstance(attempt, dict)
+            and attempt.get("state") == "outcome_unknown"
+            and attempt.get("scheduled_datetime") == scheduled_datetime
+        )
 
     async def async_close(self) -> None:
         """Release per-entry state; Home Assistant owns helper-created sessions."""

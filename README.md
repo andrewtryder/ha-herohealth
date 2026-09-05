@@ -90,6 +90,13 @@ with `scripts/run-ha-dev`, then open <http://localhost:8123>. The source tree is
 symlinked into `.ha-dev/custom_components`, so edits are immediately available;
 never put credentials in `.ha-dev` or tracked files.
 
+The development-only smoke test is read-only and never sends a dispense command.
+To inspect only response structure (key paths, container and primitive types), run
+`HERO_SMOKE_SCHEMA=1 scripts/live-smoke`. It reads credentials solely from ignored
+`.env.local` and intentionally never prints values, IDs, timestamps, medication
+data, tokens, or cookies. `pills-by-schedules` is included solely for schema
+discovery; it is not used to authorize dispensing.
+
 The scheduled `future-compat` workflow tests the newest compatible
 `pytest-homeassistant-custom-component` release and logs its resolved Home
 Assistant version. It is an early-warning lane only: it does not imply support

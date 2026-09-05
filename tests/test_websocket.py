@@ -7,7 +7,10 @@ import aiohttp
 import pytest
 
 from custom_components.hero_health.api.client import HeroCloudClient
-from custom_components.hero_health.api.exceptions import HeroDispenseError
+from custom_components.hero_health.api.exceptions import (
+    HeroDispenseError,
+    HeroDispenseOutcomeUnknown,
+)
 
 
 class FakeWebSocket:
@@ -32,6 +35,13 @@ class FakeWebSocket:
 
     async def send_json(self, payload):
         self.sent.append(payload)
+
+
+class StartSendFailWebSocket(FakeWebSocket):
+    async def send_json(self, payload):
+        self.sent.append(payload)
+        if payload["type"] == "dispense_frontend_start":
+            raise aiohttp.ClientConnectionError("closed")
 
 
 class FakeSession:
@@ -106,10 +116,90 @@ async def test_malformed_or_closed_socket_raises():
     client = HeroCloudClient(FakeSession(ws), "token")
     with pytest.raises(HeroDispenseError):
         await client.dispense_scheduled_dose("time")
+
+
+@pytest.mark.asyncio
+async def test_failure_after_start_is_ambiguous_and_notified():
+    ws = FakeWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True},
+                }
+            ),
+        ]
+    )
+    marked = []
+
+    async def mark_start():
+        marked.append(True)
+
+    client = HeroCloudClient(FakeSession(ws), "token")
+    with pytest.raises(HeroDispenseOutcomeUnknown):
+        await client.dispense_scheduled_dose("time", on_start_sent=mark_start)
+    assert marked == [True]
+    assert [item["type"] for item in ws.sent][-1] == "dispense_frontend_start"
     ws = FakeWebSocket([])
     client = HeroCloudClient(FakeSession(ws), "token")
     with pytest.raises(HeroDispenseError):
         await client.dispense_scheduled_dose("time")
+
+
+@pytest.mark.asyncio
+async def test_start_marker_failure_prevents_start_frame():
+    ws = FakeWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True},
+                }
+            ),
+        ]
+    )
+
+    async def persist_failure():
+        raise RuntimeError("storage unavailable")
+
+    with pytest.raises(RuntimeError, match="storage unavailable"):
+        await HeroCloudClient(FakeSession(ws), "token").dispense_scheduled_dose(
+            "time", on_start_sent=persist_failure
+        )
+    assert "dispense_frontend_start" not in [item["type"] for item in ws.sent]
+
+
+@pytest.mark.asyncio
+async def test_start_send_failure_is_ambiguous_after_marker():
+    ws = StartSendFailWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True},
+                }
+            ),
+        ]
+    )
+    marked = []
+
+    async def mark_start():
+        marked.append(True)
+
+    with pytest.raises(HeroDispenseOutcomeUnknown):
+        await HeroCloudClient(FakeSession(ws), "token").dispense_scheduled_dose(
+            "time", on_start_sent=mark_start
+        )
+    assert marked == [True]
 
 
 @pytest.mark.asyncio
