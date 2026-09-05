@@ -27,3 +27,26 @@ in `api/client.py` intentionally until new read-only evidence shows they changed
 The Worker explicit-account query-string bug is corrected: account selection is sent
 only as `x-hero-account`. Naive Hero timestamps are interpreted in Home Assistant's
 configured local timezone; offset-bearing timestamps retain their offsets.
+
+## Physical Device Metadata and Schedule Fallback
+
+- **Device Registry Metadata**: Serial number, model code, and hardware family are
+  read from confirmed `user-status` payload fields (`serial`, `device_manifest.model`,
+  `device_manifest.family`). Home Assistant device registry identity remains
+  account/config-entry based `(DOMAIN, entry_id/unique_id)` for compatibility.
+- **Device Timezone**: Informational recurring schedule calculations resolve timezone
+  from `user-status.device_timezone` if valid, falling back to Home Assistant's
+  configured local timezone.
+- **Permanent Schedule Fallback**: `pills-by-schedules` provides recurring weekly
+  timetable rules. It is consumed strictly as an informational fallback for
+  `Next scheduled dose` when no future dose exists in `home-screen-doses`.
+- **Dispense Safety Isolation**: Recurring schedule data never feeds into
+  dispense eligibility, availability, preflight, or dose selection. `home-screen-doses`
+  plus Hero's WebSocket preflight remain authoritative for dispensing.
+- **Pending Changes**: If Hero reports `pending_changes=true`, recurring schedule
+  fallback is suppressed.
+- **Recurrence Support**: Weekly `dow` rules are parsed; `every_x_days` recurrence is
+  deliberately unsupported until a recurrence reference anchor date is confirmed.
+- **Android Client Headers**: Mobile handshake headers (`x-hero-client: HeroApp;android-33;3.8.6`,
+  `User-Agent: okhttp/4.9.2`) remain unchanged because read-only observation showed
+  zero protocol drift.
