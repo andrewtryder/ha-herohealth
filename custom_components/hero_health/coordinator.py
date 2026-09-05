@@ -42,17 +42,21 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         model = status.get("device_model") if isinstance(status, dict) else None
         if not model or not isinstance(model, str) or model == "Hero dispenser":
-            if isinstance(manifest, dict) and isinstance(manifest.get("model"), int):
-                model = f"Model {manifest['model']}"
+            model_code = manifest.get("model") if isinstance(manifest, dict) else None
+            if type(model_code) is int:
+                model = f"Model {model_code}"
             elif not model or not isinstance(model, str):
                 model = "Hero dispenser"
 
         hw_version = None
-        if isinstance(manifest, dict) and isinstance(manifest.get("family"), int):
-            hw_version = f"Family {manifest['family']}"
+        family_code = manifest.get("family") if isinstance(manifest, dict) else None
+        if type(family_code) is int:
+            hw_version = f"Family {family_code}"
 
         serial = status.get("serial") if isinstance(status, dict) else None
-        serial_number = serial if isinstance(serial, str) and serial.strip() else None
+        serial_number = (
+            serial.strip() if isinstance(serial, str) and serial.strip() else None
+        )
 
         kwargs: dict[str, Any] = {
             "identifiers": {

@@ -258,3 +258,30 @@ def test_schedule_dst_boundary_real_timezone():
     }
     result = next_recurring_schedule(payload, now, tz)
     assert result == datetime(2026, 11, 1, 8, 0, tzinfo=tz)
+
+
+def test_schedule_dst_spring_forward_gap():
+    # America/New_York spring-forward occurs 2026-03-08, jumping 02:00 -> 03:00.
+    # Schedule at 02:30 is a gap; zoneinfo preserves wall time with fold=0.
+    tz = ZoneInfo("America/New_York")
+    now = datetime(2026, 3, 7, 20, 0, tzinfo=tz)
+    payload = {
+        "schedules": [{"schedule_id": "s1", "dow": "Sun", "time": "02:30"}],
+        "pending_changes": False,
+    }
+    result = next_recurring_schedule(payload, now, tz)
+    assert result == datetime(2026, 3, 8, 2, 30, tzinfo=tz)
+
+
+def test_schedule_dst_fall_back_ambiguity():
+    # America/New_York fall-back occurs 2026-11-01, repeating 01:00 -> 02:00.
+    # Schedule at 01:30 is ambiguous; zoneinfo resolves fold=0 (first occurrence).
+    tz = ZoneInfo("America/New_York")
+    now = datetime(2026, 10, 31, 20, 0, tzinfo=tz)
+    payload = {
+        "schedules": [{"schedule_id": "s1", "dow": "Sun", "time": "01:30"}],
+        "pending_changes": False,
+    }
+    result = next_recurring_schedule(payload, now, tz)
+    assert result == datetime(2026, 11, 1, 1, 30, tzinfo=tz)
+    assert result.fold == 0

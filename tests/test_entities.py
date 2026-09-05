@@ -275,3 +275,18 @@ def test_coordinator_device_info_metadata():
     assert "serial_number" not in info4
     assert info4["model"] == "Hero dispenser"
     assert "hw_version" not in info4
+
+    # Case 5: Serial with surrounding whitespace is stripped
+    status_padded_serial = {
+        "serial": "   HERO-SN-STRIPPED   ",
+    }
+    coord5 = DummyCoordinator(entry, status_padded_serial)
+    assert coord5.device_info["serial_number"] == "HERO-SN-STRIPPED"
+
+    # Case 6: Booleans in manifest (subclass of int) are rejected
+    status_bool_manifest = {
+        "device_manifest": {"model": True, "family": False},
+    }
+    coord6 = DummyCoordinator(entry, status_bool_manifest)
+    assert coord6.device_info["model"] == "Hero dispenser"
+    assert "hw_version" not in coord6.device_info
