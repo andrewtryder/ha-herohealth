@@ -79,6 +79,10 @@ class LifecycleClient:
         self.calls.append(("stats", self.access_token))
         return {}
 
+    async def pills_by_schedules(self):
+        self.calls.append(("schedules", self.access_token))
+        return {"schedules": [], "pending_changes": False}
+
 
 def _real_session(client, tokens, auth):
     session = object.__new__(HeroSession)
@@ -460,7 +464,7 @@ async def test_dispense_aborts_when_immediate_refresh_fails():
     session = FakeSession()
     entry = SimpleNamespace(entry_id="entry", runtime_data=None)
     coordinator = FakeCoordinator(None, entry, session)
-    coordinator.last_update_success = False
+    coordinator.last_update_success = True
     coordinator.data = {
         "doses": {
             "dates": [
@@ -475,12 +479,20 @@ async def test_dispense_aborts_when_immediate_refresh_fails():
             ]
         }
     }
+
+    # Immediate refresh fails and flips last_update_success to False
+    async def failing_refresh():
+        coordinator.refreshed += 1
+        coordinator.last_update_success = False
+
+    coordinator.async_refresh = failing_refresh
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
     hass = SimpleNamespace(config_entries=FakeEntries([entry]))
 
-    with pytest.raises(HomeAssistantError, match="Unable to confirm"):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await _async_dispense(hass, SimpleNamespace(data={"config_entry_id": "entry"}))
 
+    assert exc_info.value.translation_key == "dose_state_unavailable"
     assert session.executed.await_count == 0
     assert coordinator.refreshed == 1
 
@@ -639,6 +651,7 @@ async def test_coordinator_stats_date_uses_ha_local_timezone(hass, monkeypatch):
         home_screen_doses=AsyncMock(return_value={"dates": []}),
         get_home_screen_events=AsyncMock(return_value={}),
         stats=stats_mock,
+        pills_by_schedules=AsyncMock(return_value={"schedules": []}),
     )
 
     async def execute(operation):
@@ -663,6 +676,7 @@ async def test_coordinator_update_data_error_handling(hass):
         home_screen_doses=AsyncMock(return_value={}),
         get_home_screen_events=AsyncMock(return_value={}),
         stats=AsyncMock(return_value={}),
+        pills_by_schedules=AsyncMock(return_value={"schedules": []}),
     )
 
     async def execute_auth(operation):
@@ -682,6 +696,7 @@ async def test_coordinator_update_data_error_handling(hass):
         home_screen_doses=AsyncMock(return_value={}),
         get_home_screen_events=AsyncMock(return_value={}),
         stats=AsyncMock(return_value={}),
+        pills_by_schedules=AsyncMock(return_value={"schedules": []}),
     )
 
     async def execute_status(operation):
@@ -704,6 +719,7 @@ async def test_required_dose_failure_does_not_replace_prior_snapshot(hass):
         home_screen_doses=AsyncMock(side_effect=HeroConnectionError("temporary")),
         get_home_screen_events=AsyncMock(return_value={}),
         stats=AsyncMock(return_value={}),
+        pills_by_schedules=AsyncMock(return_value={"schedules": []}),
     )
 
     async def execute(operation):
@@ -726,6 +742,7 @@ async def test_required_dose_rate_limit_is_not_swallowed(hass):
         home_screen_doses=AsyncMock(side_effect=HeroRateLimitError(17)),
         get_home_screen_events=AsyncMock(return_value={}),
         stats=AsyncMock(return_value={}),
+        pills_by_schedules=AsyncMock(return_value={"schedules": []}),
     )
 
     async def execute(operation):
@@ -748,6 +765,7 @@ async def test_malformed_required_doses_fail_snapshot(hass, bad_doses):
         home_screen_doses=AsyncMock(return_value=bad_doses),
         get_home_screen_events=AsyncMock(return_value={}),
         stats=AsyncMock(return_value={}),
+        pills_by_schedules=AsyncMock(return_value={"schedules": []}),
     )
 
     async def execute(operation):
@@ -756,6 +774,141 @@ async def test_malformed_required_doses_fail_snapshot(hass, bad_doses):
     with pytest.raises(UpdateFailed):
         await HeroCoordinator(
             hass, entry, SimpleNamespace(async_execute=execute)
+        )._async_update_data()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("bad_offline", "bad_status", "bad_config"),
+    [
+        (None, {}, {"config": {"pills": []}}),
+        ([], {}, {"config": {"pills": []}}),
+        ({}, None, {"config": {"pills": []}}),
+        ({}, "online", {"config": {"pills": []}}),
+        ({}, {}, None),
+        ({}, {}, []),
+        ({}, {}, {"config": None}),
+        ({}, {}, {"config": {"pills": "not-a-list"}}),
+    ],
+)
+async def test_malformed_required_endpoints_fail_snapshot(
+    hass, bad_offline, bad_status, bad_config
+):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    client = SimpleNamespace(
+        check_hero_offline=AsyncMock(return_value=bad_offline),
+        user_status=AsyncMock(return_value=bad_status),
+        last_d2d_config=AsyncMock(return_value=bad_config),
+        home_screen_doses=AsyncMock(return_value={"dates": []}),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=AsyncMock(return_value={}),
+        pills_by_schedules=AsyncMock(return_value={"schedules": []}),
+    )
+
+    async def execute(operation):
+        return await operation(client)
+
+    coordinator = HeroCoordinator(hass, entry, SimpleNamespace(async_execute=execute))
+    coordinator.data = {"doses": {"dates": []}}
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
+    # Prior good data preserved
+    assert coordinator.data["doses"]["dates"] == []
+
+
+@pytest.mark.asyncio
+async def test_pills_by_schedules_variations(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+
+    # Success populates schedules
+    good_client = SimpleNamespace(
+        check_hero_offline=AsyncMock(return_value={"hero_offline": False}),
+        user_status=AsyncMock(return_value={}),
+        last_d2d_config=AsyncMock(return_value={"config": {"pills": []}}),
+        home_screen_doses=AsyncMock(return_value={"dates": []}),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=AsyncMock(return_value={}),
+        pills_by_schedules=AsyncMock(
+            return_value={"schedules": [{"schedule_id": "1"}]}
+        ),
+    )
+    coord = HeroCoordinator(
+        hass, entry, SimpleNamespace(async_execute=lambda op: op(good_client))
+    )
+    data = await coord._async_update_data()
+    assert data["schedules"] == {"schedules": [{"schedule_id": "1"}]}
+
+    # Connection failure on optional schedules endpoint does not fail snapshot
+    conn_fail_client = SimpleNamespace(
+        check_hero_offline=AsyncMock(return_value={"hero_offline": False}),
+        user_status=AsyncMock(return_value={}),
+        last_d2d_config=AsyncMock(return_value={"config": {"pills": []}}),
+        home_screen_doses=AsyncMock(return_value={"dates": []}),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=AsyncMock(return_value={}),
+        pills_by_schedules=AsyncMock(side_effect=HeroConnectionError("conn timeout")),
+    )
+    coord2 = HeroCoordinator(
+        hass, entry, SimpleNamespace(async_execute=lambda op: op(conn_fail_client))
+    )
+    data2 = await coord2._async_update_data()
+    assert data2["schedules"] is None
+    assert data2["doses"]["dates"] == []
+
+    # Rate limit error on optional schedules endpoint does not fail snapshot
+    rate_fail_client = SimpleNamespace(
+        check_hero_offline=AsyncMock(return_value={"hero_offline": False}),
+        user_status=AsyncMock(return_value={}),
+        last_d2d_config=AsyncMock(return_value={"config": {"pills": []}}),
+        home_screen_doses=AsyncMock(return_value={"dates": []}),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=AsyncMock(return_value={}),
+        pills_by_schedules=AsyncMock(side_effect=HeroRateLimitError(60)),
+    )
+    coord3 = HeroCoordinator(
+        hass, entry, SimpleNamespace(async_execute=lambda op: op(rate_fail_client))
+    )
+    data3 = await coord3._async_update_data()
+    assert data3["schedules"] is None
+
+    # Auth error on optional schedules endpoint raises ConfigEntryAuthFailed
+    auth_fail_client = SimpleNamespace(
+        check_hero_offline=AsyncMock(return_value={"hero_offline": False}),
+        user_status=AsyncMock(return_value={}),
+        last_d2d_config=AsyncMock(return_value={"config": {"pills": []}}),
+        home_screen_doses=AsyncMock(return_value={"dates": []}),
+        get_home_screen_events=AsyncMock(return_value={}),
+        stats=AsyncMock(return_value={}),
+        pills_by_schedules=AsyncMock(
+            side_effect=HeroAuthenticationError("auth failed")
+        ),
+    )
+    coord4 = HeroCoordinator(
+        hass, entry, SimpleNamespace(async_execute=lambda op: op(auth_fail_client))
+    )
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coord4._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_rate_limit_retry_after_fallback(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+
+    async def execute_none(_operation):
+        raise HeroRateLimitError(None)
+
+    with pytest.raises(UpdateFailed) as raised:
+        await HeroCoordinator(
+            hass, entry, SimpleNamespace(async_execute=execute_none)
+        )._async_update_data()
+    assert raised.value.retry_after == 300
+
+    async def execute_unexpected(_operation):
+        raise TypeError("unexpected type error")
+
+    with pytest.raises(UpdateFailed, match="Hero returned an unexpected snapshot"):
+        await HeroCoordinator(
+            hass, entry, SimpleNamespace(async_execute=execute_unexpected)
         )._async_update_data()
 
 
