@@ -48,3 +48,23 @@ def test_dispense_eligibility_ignores_malformed_or_missing_dose():
     assert not evaluate_dispense_eligibility(
         {"dates": [{"times": [{"scheduled_datetime": "bad", "doses": []}]}]}, now
     ).eligible
+    # Malformed day (not a dict) or slot (not a dict) are gracefully skipped
+    assert not evaluate_dispense_eligibility(
+        {"dates": ["not-a-dict", {"times": ["not-a-slot", {}]}]}, now
+    ).eligible
+
+
+def test_recurring_schedule_never_becomes_dispense_candidate():
+    """Recurring fallback schedules must never participate in dispense eligibility."""
+    now = datetime(2026, 9, 3, 12, tzinfo=dt_util.UTC)
+    # A schedule payload passed instead of doses payload must evaluate to not eligible
+    schedules_payload = {
+        "schedules": [
+            {"schedule_id": "s1", "dow": "Mon, Tue, Wed, Thu, Fri", "time": "12:00"}
+        ],
+        "pending_changes": False,
+    }
+    result = evaluate_dispense_eligibility(schedules_payload, now)
+    assert result.eligible is False
+    assert result.scheduled_datetime is None
+    assert result.window_opens_at is None

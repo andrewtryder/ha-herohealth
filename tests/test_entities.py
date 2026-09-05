@@ -171,3 +171,107 @@ def test_next_dose_sensor_selection_and_ordering(monkeypatch):
         ]
     }
     assert sensor.native_value is None
+
+
+def test_next_dose_sensor_recurring_fallback(monkeypatch):
+    coordinator = FakeCoordinator()
+    sensor = NextDoseSensor(coordinator)
+
+    # Reference time: Monday 2026-09-07 10:00 UTC
+    now = datetime(2026, 9, 7, 10, 0, 0, tzinfo=dt_util.UTC)
+    monkeypatch.setattr(dt_util, "now", lambda: now)
+
+    # Case 1: Live future dose exists -> takes precedence over recurring fallback
+    coordinator.data["doses"] = {
+        "dates": [{"times": [{"scheduled_datetime": "2026-09-07T11:00:00+00:00"}]}]
+    }
+    coordinator.data["schedules"] = {
+        "schedules": [{"schedule_id": "s1", "dow": "Mon", "time": "10:30"}],
+        "pending_changes": False,
+    }
+    # Even if recurring fallback is earlier (10:30), live dose takes precedence!
+    assert sensor.native_value == datetime(2026, 9, 7, 11, 0, 0, tzinfo=dt_util.UTC)
+
+    # Case 2: No live future dose -> recurring fallback is used
+    coordinator.data["doses"] = {
+        "dates": [
+            {
+                "times": [
+                    {"scheduled_datetime": "2026-09-07T08:00:00+00:00"}  # past
+                ]
+            }
+        ]
+    }
+    # Recurring fallback is at 12:00
+    coordinator.data["schedules"] = {
+        "schedules": [{"schedule_id": "s1", "dow": "Mon", "time": "12:00"}],
+        "pending_changes": False,
+    }
+    from zoneinfo import ZoneInfo
+
+    assert sensor.native_value == datetime(
+        2026, 9, 7, 12, 0, 0, tzinfo=ZoneInfo("US/Pacific")
+    )
+
+    # Case 3: Recurring fallback unavailable or pending_changes=True -> None
+    coordinator.data["schedules"]["pending_changes"] = True
+    assert sensor.native_value is None
+
+    coordinator.data["schedules"] = None
+    assert sensor.native_value is None
+
+
+def test_coordinator_device_info_metadata():
+    from custom_components.hero_health.coordinator import HeroCoordinator
+
+    class DummyCoordinator(HeroCoordinator):
+        def __init__(self, entry, status):
+            self.entry = entry
+            self.data = {"status": status}
+
+    entry = SimpleNamespace(entry_id="entry_abc", unique_id="account_123")
+
+    # Case 1: Complete valid metadata
+    status_full = {
+        "serial": "HERO-SN-12345",
+        "device_nickname": "Kitchen Dispenser",
+        "device_model": "Hero dispenser",
+        "device_manifest": {"model": 1, "family": 2},
+    }
+    coord = DummyCoordinator(entry, status_full)
+    info = coord.device_info
+    assert info["identifiers"] == {("hero_health", "account_123")}
+    assert info["manufacturer"] == "Hero Health"
+    assert info["name"] == "Kitchen Dispenser"
+    assert info["serial_number"] == "HERO-SN-12345"
+    assert info["model"] == "Model 1"
+    assert info["hw_version"] == "Family 2"
+
+    # Case 2: Meaningful custom device_model string overrides "Model X"
+    status_custom_model = {
+        "serial": "HERO-SN-12345",
+        "device_model": "Hero Smart Dispenser Pro",
+        "device_manifest": {"model": 1, "family": 2},
+    }
+    coord2 = DummyCoordinator(entry, status_custom_model)
+    assert coord2.device_info["model"] == "Hero Smart Dispenser Pro"
+
+    # Case 3: Missing/malformed/empty metadata
+    status_empty = {
+        "serial": "   ",  # whitespace only
+        "device_manifest": "malformed string",
+    }
+    coord3 = DummyCoordinator(entry, status_empty)
+    info3 = coord3.device_info
+    assert info3["identifiers"] == {("hero_health", "account_123")}
+    assert "serial_number" not in info3
+    assert info3["model"] == "Hero dispenser"
+    assert "hw_version" not in info3
+
+    # Case 4: None status
+    coord4 = DummyCoordinator(entry, None)
+    info4 = coord4.device_info
+    assert info4["identifiers"] == {("hero_health", "account_123")}
+    assert "serial_number" not in info4
+    assert info4["model"] == "Hero dispenser"
+    assert "hw_version" not in info4
