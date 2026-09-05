@@ -1,118 +1,175 @@
-# Hero Health for Home Assistant
+<p align="center">
+  <img src="assets/hero-dispenser-icon.svg" alt="Hero Health icon" width="110" />
+</p>
 
-Unofficial HACS custom integration for a Hero smart pill dispenser. It connects
-Home Assistant directly to Hero Cloud—there is no Cloudflare Worker dependency.
+<h1 align="center">Hero Health for Home Assistant</h1>
 
-> This project is not affiliated with, endorsed by, or supported by Hero Health.
-> It implements a private/mobile API reverse engineered from observed app traffic;
-> Hero can change it without notice.
+<p align="center">
+  An easy, user-friendly Home Assistant integration for the <strong>Hero medication dispenser</strong>.
+</p>
+
+<p align="center">
+  <a href="https://github.com/andrewtryder/ha-herohealth/releases">
+    <img src="https://img.shields.io/github/v/release/andrewtryder/ha-herohealth?style=for-the-badge" alt="Latest Release">
+  </a>
+  <a href="https://github.com/hacs/integration">
+    <img src="https://img.shields.io/badge/HACS-Custom-41BDF5?style=for-the-badge&logo=homeassistantcommunitystore&logoColor=white" alt="HACS Custom">
+  </a>
+  <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=andrewtryder&repository=ha-herohealth&category=integration">
+    <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Open your Home Assistant instance and open the HACS repository dialog for this repository">
+  </a>
+  <a href="https://www.home-assistant.io/">
+    <img src="https://img.shields.io/badge/Home%20Assistant-2026.8%2B-18BCF2?style=for-the-badge&logo=homeassistant&logoColor=white" alt="Home Assistant 2026.8+">
+  </a>
+</p>
+
+---
+
+## What this integration does
+
+This custom integration brings your **Hero medication dispenser** into Home Assistant so you can keep an eye on your device and medication-related status right from your dashboard.
+
+It gives you a simple Home Assistant view of:
+
+- dispenser connectivity
+- next scheduled dose
+- doses taken
+- doses missed
+- 7-day adherence
+- low-medication warnings
+- medication slot status and levels
+
+It is designed to feel native in Home Assistant and make it easier to build dashboards, helpers, and automations around your Hero dispenser.
+
+---
+
+## Screenshot
+
+<p align="center">
+  <img src="assets/hero-dashboard.jpg" alt="Hero Health integration in Home Assistant" width="1000" />
+</p>
+
+---
 
 ## Features
 
-- UI setup with PKCE login, refresh tokens, reauthentication, and account selection
-- Dispenser connectivity; seven-day adherence, taken, and missed metrics
-- A compatibility-friendly `sensor.hero_health_low_medications` state (`None` or
-  comma-separated low medication names), plus structured attributes
-- Ten stable physical slot sensors and low-level binary sensors
-- A `binary_sensor.hero_health_dispense_available` indicator that mirrors the backend's remote-dispense eligibility checks
-- Next scheduled-dose timestamp and native device registry association
-- Explicit refresh and safety-gated remote scheduled-dose service actions
+### Device overview
+See your Hero dispenser as a Home Assistant device, including helpful device details surfaced by the integration.
 
-## Install
+### Helpful sensors
+The integration creates sensors for the most useful everyday information, including:
 
-In HACS, add `https://github.com/andrewtryder/ha-herohealth` as a **Custom
-repository** of type **Integration**, download it, then restart Home Assistant.
-Alternatively copy `custom_components/hero_health` into your Home Assistant
-configuration directory and restart. Add **Hero Health** under Settings → Devices
-& services; credentials are configured only through the UI.
+- **Next scheduled dose**
+- **Doses taken**
+- **Doses missed**
+- **7-day adherence**
+- **Dispenser connectivity**
+- **Low medications**
+- **Per-slot medication details**
+- **Per-slot low medication alerts**
 
-## Entities
+### Smarter next scheduled dose
+The integration uses Hero’s live data first for the next scheduled dose.
 
-The integration creates `sensor.hero_health_low_medications`, 7-day adherence,
-doses taken/missed, next scheduled dose, and slot 1–10 sensors. It also creates a
-dispenser connectivity binary sensor and a low binary sensor per physical slot.
-Slot entity identity remains stable when medication assignments change.
+If Hero’s live window does not currently include a future dose, the integration can still show the next scheduled time using the dispenser’s recurring weekly schedule so the sensor stays useful throughout the day.
 
-Physical dispenser metadata is attached to Home Assistant's device registry:
-serial number, model code, and hardware family are extracted from confirmed
-`user-status` fields (`serial`, `device_manifest.model`, `device_manifest.family`).
-Home Assistant device registry identity remains account-based for stability.
+### Dashboard and automation friendly
+All entities are available like any other Home Assistant integration, making them easy to use in:
 
-The `Next scheduled dose` sensor evaluates Hero's live `home-screen-doses`
-window first. When no future dose remains in that window, it falls back to
-permanent recurring weekly timetable definitions retrieved from `pills-by-schedules`.
-Timetable calculations resolve `device_timezone` from Hero `user-status` (falling
-back to Home Assistant's local timezone). When Hero reports `pending_changes=true`,
-recurring fallback is suppressed. Interval `every_x_days` recurrence is
-deliberately unsupported until an explicit reference anchor date is confirmed.
-The recurring schedule fallback is strictly informational for sensor display:
-it never participates in dispense eligibility, availability, preflight, or selection.
+- dashboards
+- automations
+- template sensors
+- notifications
+- health-related helper views
 
-Use a Lovelace entities card with the above entities; no custom card is required.
+---
 
-## Actions
+## Installation
 
-Hero Health refreshes in the background every three hours by default to reduce
-traffic to Hero's undocumented cloud API. Change this interval in the integration's
-Configure dialog (15 minutes to 24 hours), or use the refresh action when immediate
-data is needed.
+### Install with HACS (recommended)
 
-`hero_health.refresh` immediately refreshes shared data. Both Hero actions require
-`config_entry_id`; Home Assistant presents this as a Hero Health connection selector.
-Manual entity updates of the low-medications sensor also refresh its coordinator.
+1. Open **HACS**
+2. Go to **Integrations**
+3. Select the three-dot menu and choose **Custom repositories**
+4. Add this repository:
 
-`hero_health.dispense_scheduled_dose` is safety-sensitive. It refreshes Hero data,
-requires Hero itself to report `time_to_take`, and permits a dose only from 30
-minutes before through six hours after its scheduled time. The six-hour late window
-is an observed implementation limitation pending additional live validation. It
-matches an optional `scheduled_datetime` against Hero's live data, performs WebSocket
-authorization and preflight, and succeeds only after Hero reports completion. Put it
-behind a Lovelace confirmation or a deliberate automation; it is not a button entity.
+   `https://github.com/andrewtryder/ha-herohealth`
 
-The dispense-available binary sensor is observability only. Lovelace users may use
-it to conditionally show their own confirmed action control, but it never bypasses
-the action's Hero preflight or safety boundary.
+5. Choose **Integration** as the category
+6. Click **Add**
+7. Search for **Hero Health**
+8. Install it
+9. Restart Home Assistant
 
-## Privacy and troubleshooting
+Or click below to open HACS directly:
 
-Credentials and session tokens are never entity attributes or diagnostics. Hero's
-password is retained in Home Assistant's configuration storage only so the integration
-can recover when refresh credentials fail; treat Home Assistant configuration storage
-and backups as sensitive. Avoid sharing debug logs: they may still reveal operational timing. For temporary debug
-logging, add `custom_components.hero_health: debug`, reproduce the issue, then
-remove it. Do not post credentials, tokens, cookies, account IDs, or medication
-details in an issue.
+<p>
+  <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=andrewtryder&repository=ha-herohealth&category=integration">
+    <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Add to HACS">
+  </a>
+</p>
 
-If setup fails, check Home Assistant network access and credentials, then reconfigure
-or reauthenticate the integration. See [MIGRATION.md](MIGRATION.md) to move the
-existing low-medication announcement without retiring the Worker prematurely.
+---
 
-## HACS publishing
+## Setup
 
-This repository has HACS metadata and Hassfest/HACS validation workflows. HACS may
-require original brand assets for default-directory inclusion; none are copied here.
+After installation:
 
-## Development
+1. Open **Settings**
+2. Go to **Devices & Services**
+3. Click **Add Integration**
+4. Search for **Hero Health**
+5. Sign in with your Hero account
+6. Finish setup
 
-The minimum tested Home Assistant version is **2026.8.3** on **Python 3.14**.
-The recommended environment is the included devcontainer: in VS Code, choose
-**Dev Containers: Reopen in Container**. It creates `/home/vscode/.venv` using
-the deterministic baseline in `requirements_test.txt`.
+Once configured, your Hero dispenser and related sensors will appear in Home Assistant automatically.
 
-Run `pytest`, `ruff check .`, `ruff format --check .`, and
-`pre-commit run --all-files`. Start the matching local Home Assistant runtime
-with `scripts/run-ha-dev`, then open <http://localhost:8123>. The source tree is
-symlinked into `.ha-dev/custom_components`, so edits are immediately available;
-never put credentials in `.ha-dev` or tracked files.
+---
 
-The development-only smoke test is read-only and never sends a dispense command.
-To inspect only response structure (key paths, container and primitive types), run
-`HERO_SMOKE_SCHEMA=1 scripts/live-smoke`. It reads credentials solely from ignored
-`.env.local` and intentionally never prints values, IDs, timestamps, medication
-data, tokens, or cookies. `pills-by-schedules` is included solely for schema
-discovery; it is not used to authorize dispensing.
+## What you’ll see in Home Assistant
 
-The scheduled `future-compat` workflow tests the newest compatible
-`pytest-homeassistant-custom-component` release and logs its resolved Home
-Assistant version. It is an early-warning lane only: it does not imply support
-for unreleased Home Assistant versions or replace the 2026.8.3 baseline.
+Depending on your dispenser configuration, you may see entities such as:
+
+- `sensor.hero_health_next_scheduled_dose`
+- `sensor.hero_health_doses_taken`
+- `sensor.hero_health_doses_missed`
+- `sensor.hero_health_7_day_adherence`
+- `binary_sensor.hero_health_dispenser_connectivity`
+- `sensor.hero_health_low_medications`
+
+You’ll also get entities for individual medication slots.
+
+---
+
+## Great uses for this integration
+
+This integration works especially well for:
+
+- showing medication status on a family dashboard
+- sending reminders when doses are coming up
+- alerting when medications are low
+- monitoring dispenser connectivity
+- building simple caregiver-friendly views in Home Assistant
+
+---
+
+## Notes
+
+- This is an **unofficial** Home Assistant integration for Hero.
+- It is intended to make Hero information easier to view inside Home Assistant.
+- Some values depend on the information currently available from Hero.
+
+---
+
+## Support
+
+If you run into problems or want to request a feature, please open an issue here:
+
+[GitHub Issues](https://github.com/andrewtryder/ha-herohealth/issues)
+
+---
+
+## Disclaimer
+
+Hero and Hero Health are the property of their respective owner.
+This project is an independent, unofficial integration and is not affiliated with or endorsed by Hero Health.
