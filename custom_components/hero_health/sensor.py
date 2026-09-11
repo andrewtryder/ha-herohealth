@@ -26,6 +26,7 @@ async def async_setup_entry(
     c: HeroCoordinator = entry.runtime_data.coordinator
     add_entities(
         [
+            MedicationsSensor(c),
             LowMedicationsSensor(c),
             AdherenceSensor(c),
             MetricSensor(c, "doses_taken", "Doses taken"),
@@ -34,6 +35,46 @@ async def async_setup_entry(
             *[SlotSensor(c, slot) for slot in range(1, 11)],
         ]
     )
+
+
+class MedicationsSensor(HeroEntity, SensorEntity):
+    """Summarize all loaded medications for dashboard cards and badges."""
+
+    _attr_name = "Medications"
+    _attr_icon = "mdi:pill-multiple"
+
+    def __init__(self, coordinator: HeroCoordinator) -> None:
+        super().__init__(coordinator, "medications")
+
+    @property
+    def _medications(self):
+        medications = (self.coordinator.data or {}).get("medications", [])
+        return [m for m in medications if isinstance(m, dict) and m.get("name")]
+
+    @property
+    def native_value(self):
+        return len(self._medications)
+
+    @property
+    def extra_state_attributes(self):
+        medications = [
+            {
+                "name": med.get("name"),
+                "slot": med.get("slot"),
+                "pill_type": med.get("pill_type"),
+                "level_enum": med.get("pill_level_enum"),
+                "level_calculated": med.get("pill_level_calculated"),
+                "exact_count": med.get("exact_pill_count"),
+                "low": bool(med.get("is_low")),
+                "updated_at": med.get("updated_at"),
+            }
+            for med in self._medications
+        ]
+        return {
+            "names": [med["name"] for med in medications],
+            "medications": medications,
+            "low_count": sum(1 for med in medications if med["low"]),
+        }
 
 
 class LowMedicationsSensor(HeroEntity, SensorEntity):
@@ -155,7 +196,7 @@ class NextDoseSensor(HeroEntity, SensorEntity):
                             if val and isinstance(val, str):
                                 try:
                                     parsed = parse_hero_datetime(val)
-                                except TypeError, ValueError, AttributeError:
+                                except (TypeError, ValueError, AttributeError):
                                     continue
                                 if parsed >= now:
                                     candidates.append(parsed)
