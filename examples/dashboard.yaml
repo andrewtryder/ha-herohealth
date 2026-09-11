@@ -1,0 +1,33 @@
+# Example Home Assistant dashboard snippets for Hero Health.
+# Replace entity IDs if Home Assistant generated different names for your device.
+
+# Compact medication count badge:
+badges:
+  - type: entity
+    entity: sensor.hero_health_medications
+    name: Medications
+    icon: mdi:pill-multiple
+
+# Card showing every loaded medication from the summary sensor:
+cards:
+  - type: markdown
+    title: Hero medications
+    content: >-
+      {% set medications = state_attr('sensor.hero_health_medications', 'medications') or [] %}
+      {% if medications %}
+      {% for medication in medications %}
+      **Slot {{ medication.slot }} — {{ medication.name }}**
+      {% if medication.exact_count is not none %} · {{ medication.exact_count }} pills{% endif %}
+      {% if medication.low %} · ⚠️ Low{% endif %}
+
+      {% endfor %}
+      {% else %}
+      No medications are currently loaded.
+      {% endif %}
+
+  # The button is unavailable outside Hero's eligible dispense window. Pressing it
+  # still performs a fresh preflight through the guarded integration service.
+  - type: tile
+    entity: button.hero_health_dispense_scheduled_dose
+    name: Dispense scheduled dose
+    icon: mdi:pill
