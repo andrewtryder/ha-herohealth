@@ -15,6 +15,7 @@ from custom_components.hero_health.entity import HeroEntity
 from custom_components.hero_health.sensor import (
     AdherenceSensor,
     LowMedicationsSensor,
+    MedicationsSensor,
     MetricSensor,
     NextDoseSensor,
     SlotSensor,
@@ -50,6 +51,20 @@ class FakeCoordinator:
 @pytest.mark.asyncio
 async def test_entity_values_and_slot_identity():
     coordinator = FakeCoordinator()
+    medications = MedicationsSensor(coordinator)
+    assert medications.native_value == 2
+    assert medications.extra_state_attributes["names"] == ["Example A", "Example B"]
+    assert medications.extra_state_attributes["low_count"] == 2
+    assert medications.extra_state_attributes["medications"][0] == {
+        "name": "Example A",
+        "slot": 1,
+        "pill_type": None,
+        "level_enum": None,
+        "level_calculated": None,
+        "exact_count": 2,
+        "low": True,
+        "updated_at": None,
+    }
     low = LowMedicationsSensor(coordinator)
     await low.async_update()
     assert coordinator.refreshed
@@ -104,7 +119,7 @@ async def test_platform_creates_expected_sensor_entities():
     entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinator=coordinator))
     added = []
     await async_setup_entry(None, entry, added.extend)
-    assert len(added) == 15
+    assert len(added) == 16
     assert {entity.unique_id for entity in added if "slot_" in entity.unique_id} == {
         f"fake-account_slot_{slot}" for slot in range(1, 11)
     }
