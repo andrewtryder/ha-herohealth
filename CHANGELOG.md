@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/andrewtryder/ha-herohealth/compare/v0.3.0...v0.4.0) (2026-09-11)
+
+
+### Features
+
+* add medication dashboard and dispense button ([85f96fc](https://github.com/andrewtryder/ha-herohealth/commit/85f96fc5e4f4ff1a121c93b090a95b685c0d537a))
+
 ## [0.3.0](https://github.com/andrewtryder/ha-herohealth/compare/v0.2.0...v0.3.0) (2026-09-05)
 
 
