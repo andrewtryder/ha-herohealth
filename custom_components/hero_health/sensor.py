@@ -196,7 +196,7 @@ class NextDoseSensor(HeroEntity, SensorEntity):
                             if val and isinstance(val, str):
                                 try:
                                     parsed = parse_hero_datetime(val)
-                                except (TypeError, ValueError, AttributeError):
+                                except TypeError, ValueError, AttributeError:
                                     continue
                                 if parsed >= now:
                                     candidates.append(parsed)
