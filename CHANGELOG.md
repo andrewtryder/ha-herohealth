@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/andrewtryder/ha-herohealth/compare/v0.4.0...v0.4.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* configure semantic PR title types correctly ([2e2ba69](https://github.com/andrewtryder/ha-herohealth/commit/2e2ba698c9f6b7ba3c79ca01186ffc4d38b95026))
+* configure semantic PR title types correctly ([658e3c5](https://github.com/andrewtryder/ha-herohealth/commit/658e3c519764e51310b37e4aa583bed0a86230ad))
+
 ## [0.4.0](https://github.com/andrewtryder/ha-herohealth/compare/v0.3.0...v0.4.0) (2026-09-11)
 
 
