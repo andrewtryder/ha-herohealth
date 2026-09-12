@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
@@ -16,6 +17,7 @@ from .api.auth import HeroAuthClient
 from .api.client import HeroCloudClient
 from .api.exceptions import HeroAuthenticationError
 from .api.models import HeroTokens
+from .const import DISPENSE_LATE_WINDOW
 
 
 class HeroSession:
@@ -42,15 +44,19 @@ class HeroSession:
         self._store = Store[dict[str, Any]](hass, 1, f"hero_health.{entry_id}")
         self._persist = persist
         # Hero's authentication cookies must not be shared with Home Assistant.
+        # When persist is False (e.g. config-flow validation), auto_cleanup is False
+        # so that async_close() can explicitly detach() without accumulating listeners.
         self._http = async_create_clientsession(
             hass,
             cookie_jar=aiohttp.CookieJar(),
             timeout=aiohttp.ClientTimeout(total=25),
+            auto_cleanup=persist,
         )
         self._auth = HeroAuthClient(self._http)
         self._tokens: HeroTokens | None = None
         self._last_dispense_id: str | None = None
         self._dispense_attempt: dict[str, str] | None = None
+        self._dispense_journal: dict[str, dict[str, Any]] = {}
         self.client: HeroCloudClient | None = None
         self._lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
@@ -65,29 +71,108 @@ class HeroSession:
                 self._tokens = HeroTokens.from_dict(saved["tokens"])
             except KeyError, TypeError, ValueError:
                 pass
-        last_dispense_id = (
-            saved.get("last_dispense_id") if isinstance(saved, dict) else None
-        )
-        self._last_dispense_id = (
-            last_dispense_id
-            if identity_matches and isinstance(last_dispense_id, str)
-            else None
-        )
-        attempt = saved.get("dispense_attempt") if isinstance(saved, dict) else None
-        self._dispense_attempt = (
-            attempt
-            if identity_matches
-            and isinstance(attempt, dict)
-            and attempt.get("state") == "outcome_unknown"
-            and isinstance(attempt.get("scheduled_datetime"), str)
-            else None
-        )
+        journal = saved.get("dispense_journal") if isinstance(saved, dict) else None
+        if identity_matches and isinstance(journal, dict):
+            self._dispense_journal = {
+                k: v
+                for k, v in journal.items()
+                if isinstance(k, str) and isinstance(v, dict) and "status" in v
+            }
+        else:
+            self._dispense_journal = {}
+
+        # Backward compatibility migration for legacy keys:
+        if identity_matches:
+            last_dispense_id = (
+                saved.get("last_dispense_id") if isinstance(saved, dict) else None
+            )
+            if (
+                isinstance(last_dispense_id, str)
+                and last_dispense_id not in self._dispense_journal
+            ):
+                self._dispense_journal[last_dispense_id] = {
+                    "status": "completed",
+                    "recorded_at": time.time(),
+                }
+            attempt = saved.get("dispense_attempt") if isinstance(saved, dict) else None
+            if (
+                isinstance(attempt, dict)
+                and attempt.get("state") == "outcome_unknown"
+                and isinstance(attempt.get("scheduled_datetime"), str)
+            ):
+                sched = attempt["scheduled_datetime"]
+                if sched not in self._dispense_journal:
+                    self._dispense_journal[sched] = {
+                        "status": "outcome_unknown",
+                        "recorded_at": time.time(),
+                    }
+
+        self._prune_dispense_journal()
+        self._sync_legacy_fields()
         await self._async_ensure_tokens()
         assert self._tokens
         self.client = HeroCloudClient(
             self._http, self._tokens.access_token, self.account_id
         )
         return self.client
+
+    def _get_journal(self) -> dict[str, dict[str, Any]]:
+        """Return internal journal dict, initializing if bypassed by mocks."""
+        if not hasattr(self, "_dispense_journal") or self._dispense_journal is None:
+            self._dispense_journal = {}
+        return self._dispense_journal
+
+    @property
+    def dispense_journal(self) -> dict[str, dict[str, Any]]:
+        """Return a copy of the current in-memory dispense journal."""
+        self._prune_dispense_journal()
+        return dict(self._get_journal())
+
+    def _sync_legacy_fields(self) -> None:
+        """Synchronize legacy single-marker attributes for backward compatibility."""
+        journal = self._get_journal()
+        completed = [
+            (v.get("recorded_at", 0), k)
+            for k, v in journal.items()
+            if v.get("status") == "completed"
+        ]
+        self._last_dispense_id = max(completed)[1] if completed else None
+
+        unknowns = [
+            (v.get("recorded_at", 0), k)
+            for k, v in journal.items()
+            if v.get("status") == "outcome_unknown"
+        ]
+        if unknowns:
+            latest_unknown_dose = max(unknowns)[1]
+            self._dispense_attempt = {
+                "state": "outcome_unknown",
+                "scheduled_datetime": latest_unknown_dose,
+            }
+        else:
+            self._dispense_attempt = None
+
+    def _prune_dispense_journal(self) -> None:
+        """Prune records older than scheduled_datetime + DISPENSE_LATE_WINDOW."""
+        now_ts = time.time()
+        to_delete: list[str] = []
+        journal = self._get_journal()
+        for sched_str, entry in journal.items():
+            try:
+                sched_dt = datetime.fromisoformat(
+                    sched_str.replace("Z", "+00:00").replace(" ", "T")
+                )
+                if sched_dt.tzinfo is None:
+                    sched_dt = sched_dt.replace(tzinfo=UTC)
+                expire_ts = sched_dt.timestamp() + DISPENSE_LATE_WINDOW.total_seconds()
+                if now_ts > expire_ts:
+                    to_delete.append(sched_str)
+            except Exception:
+                recorded_at = entry.get("recorded_at", 0)
+                if now_ts > recorded_at + 86400:
+                    to_delete.append(sched_str)
+        for k in to_delete:
+            journal.pop(k, None)
 
     async def _async_save_state(self) -> None:
         """Atomically persist all session state without clobbering sibling fields."""
@@ -100,10 +185,14 @@ class HeroSession:
             if self._tokens:
                 state["tokens"] = self._tokens.as_dict()
                 state["identity"] = self._current_identity()
-            if last_dispense_id := getattr(self, "_last_dispense_id", None):
-                state["last_dispense_id"] = last_dispense_id
-            if attempt := getattr(self, "_dispense_attempt", None):
-                state["dispense_attempt"] = attempt
+            self._prune_dispense_journal()
+            self._sync_legacy_fields()
+            if self._dispense_journal:
+                state["dispense_journal"] = self._dispense_journal
+            if self._last_dispense_id:
+                state["last_dispense_id"] = self._last_dispense_id
+            if self._dispense_attempt:
+                state["dispense_attempt"] = self._dispense_attempt
             await self._store.async_save(state)
 
     def _current_identity(self) -> dict[str, str]:
@@ -170,40 +259,49 @@ class HeroSession:
     async def async_save_dispense_id(self, identifier: str) -> None:
         if not self._persist:
             return
-        self._last_dispense_id = identifier
-        attempt = getattr(self, "_dispense_attempt", None)
-        if (
-            isinstance(attempt, dict)
-            and attempt.get("scheduled_datetime") == identifier
-        ):
-            self._dispense_attempt = None
+        self._get_journal()[identifier] = {
+            "status": "completed",
+            "recorded_at": time.time(),
+        }
         await self._async_save_state()
 
     async def async_last_dispense_id(self) -> str | None:
         if not self._persist:
             return None
-        return getattr(self, "_last_dispense_id", None)
+        self._sync_legacy_fields()
+        return self._last_dispense_id
 
     async def async_mark_dispense_start_sent(self, scheduled_datetime: str) -> None:
         """Persist ambiguity before waiting for the device completion event."""
         if not self._persist:
             return
-        self._dispense_attempt = {
-            "state": "outcome_unknown",
-            "scheduled_datetime": scheduled_datetime,
+        self._get_journal()[scheduled_datetime] = {
+            "status": "outcome_unknown",
+            "recorded_at": time.time(),
         }
         await self._async_save_state()
 
     async def async_dispense_outcome_unknown(self, scheduled_datetime: str) -> bool:
-        attempt = getattr(self, "_dispense_attempt", None)
-        return bool(
-            self._persist
-            and isinstance(attempt, dict)
-            and attempt.get("state") == "outcome_unknown"
-            and attempt.get("scheduled_datetime") == scheduled_datetime
-        )
+        if not self._persist:
+            return False
+        entry = self._get_journal().get(scheduled_datetime)
+        return bool(entry and entry.get("status") == "outcome_unknown")
+
+    def is_dispense_blocked(self, scheduled_datetime: str) -> tuple[bool, str | None]:
+        """Check whether a dose is blocked by recent completed or unknown state."""
+        self._prune_dispense_journal()
+        entry = self._get_journal().get(scheduled_datetime)
+        if not entry:
+            return False, None
+        status = entry.get("status")
+        if status == "completed":
+            return True, "duplicate_recent_dose"
+        if status == "outcome_unknown":
+            return True, "dispense_outcome_unknown"
+        return False, None
 
     async def async_close(self) -> None:
-        """Release per-entry state; Home Assistant owns helper-created sessions."""
-        # async_create_clientsession registers cleanup with Home Assistant.
+        """Release per-entry state; detach session if not auto-cleaned."""
+        if not self._persist and self._http is not None:
+            self._http.detach()
         return None

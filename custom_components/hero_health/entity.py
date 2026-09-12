@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, tzinfo
 from typing import TYPE_CHECKING
 
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -25,10 +25,14 @@ def is_low_medication(level_enum: str | None, calculated: str | float | None) ->
         return False
 
 
-def parse_hero_datetime(value: str) -> datetime:
-    """Parse offsets as supplied; naive Hero times are HA-local by assumption."""
+def parse_hero_datetime(value: str, tz: tzinfo | None = None) -> datetime:
+    """Parse offsets as supplied; attach confirmed tz or default to HA-local."""
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00").replace(" ", "T"))
-    return parsed if parsed.tzinfo else dt_util.as_local(parsed)
+    if parsed.tzinfo:
+        return parsed
+    if tz is not None:
+        return parsed.replace(tzinfo=tz)
+    return dt_util.as_local(parsed)
 
 
 class HeroEntity(CoordinatorEntity):

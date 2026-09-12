@@ -134,10 +134,43 @@ Depending on your dispenser configuration, you may see entities such as:
 - `sensor.hero_health_doses_taken`
 - `sensor.hero_health_doses_missed`
 - `sensor.hero_health_7_day_adherence`
-- `binary_sensor.hero_health_dispenser_connectivity`
+- `sensor.hero_health_medications`
 - `sensor.hero_health_low_medications`
+- `binary_sensor.hero_health_dispenser_connectivity`
+- `binary_sensor.hero_health_dispense_available`
+- `button.hero_health_dispense_scheduled_dose`
 
 You’ll also get entities for individual medication slots.
+
+---
+
+## Safety & Remote Dispensing
+
+The integration includes a safety-gated button entity (`button.hero_health_dispense_scheduled_dose`) and an administrative action (`hero_health.dispense_scheduled_dose`):
+
+- **Strict Eligibility Window**: A dose can only be dispensed starting 30 minutes before its scheduled time up to 6 hours after, matching Hero's physical dispenser rules.
+- **Admin-Gated Execution**: Remote dispensing is restricted to Home Assistant administrators for safety.
+- **Durable Idempotency Journal**: Dispenses are recorded in durable storage to prevent duplicate dispenses across restarts and reloads.
+- **Fail-Closed Ambiguity Handling**: If communication drops after a dispense start frame has been sent, the dose state is flagged as unknown and subsequent remote dispenses for that time are blocked until dispenser state is physically verified.
+- **Observability Without Polling**: Availability sensors and buttons schedule precise local timers at window open/close boundaries so dashboard badges and buttons update in real time without polling the cloud.
+
+---
+
+## Privacy & Database Storage
+
+Home Assistant's recorder stores entity state changes over time. To protect sensitive medication information and keep your database performant:
+
+- Detailed medication lists, names, and slot compositions are marked unrecorded in state attributes (`_unrecorded_attributes`), keeping medication names out of long-term history logs.
+- Diagnostic downloads automatically sanitize credentials, tokens, account identifiers, and private health data.
+
+---
+
+## Removal
+
+To uninstall the integration:
+1. Navigate to **Settings** -> **Devices & Services** -> **Hero Health**.
+2. Click the three-dot menu and select **Delete**.
+3. All local session stores, cached tokens, and entities will be removed immediately.
 
 ---
 

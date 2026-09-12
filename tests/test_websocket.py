@@ -204,12 +204,24 @@ async def test_start_send_failure_is_ambiguous_after_marker():
 
 @pytest.mark.asyncio
 async def test_concurrent_dispenses_are_serialized():
-    first = FakeWebSocket(
-        [message({"type": "dispense_frontend_completed", "payload": {"status": True}})]
-    )
-    second = FakeWebSocket(
-        [message({"type": "dispense_frontend_completed", "payload": {"status": True}})]
-    )
+    def handshake():
+        return [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True},
+                }
+            ),
+            message(
+                {"type": "dispense_frontend_completed", "payload": {"status": True}}
+            ),
+        ]
+
+    first = FakeWebSocket(handshake())
+    second = FakeWebSocket(handshake())
     session = FakeSession(first)
     client = HeroCloudClient(session, "token")
     one = asyncio.create_task(client.dispense_scheduled_dose("one"))
@@ -217,3 +229,200 @@ async def test_concurrent_dispenses_are_serialized():
     session.ws = second
     two = asyncio.create_task(client.dispense_scheduled_dose("two"))
     await asyncio.gather(one, two)
+
+
+@pytest.mark.asyncio
+async def test_websocket_correlation_mismatches():
+    # Preflight account mismatch
+    ws = FakeWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True, "account_id": "different-account"},
+                }
+            ),
+        ]
+    )
+    client = HeroCloudClient(FakeSession(ws), "token", "my-account")
+    with pytest.raises(HeroDispenseError, match="account ID mismatch"):
+        await client.dispense_scheduled_dose("2026-01-01T10:00:00+00:00")
+
+    # Preflight scheduled datetime mismatch
+    ws = FakeWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True, "scheduled_datetime": "wrong-time"},
+                }
+            ),
+        ]
+    )
+    client = HeroCloudClient(FakeSession(ws), "token", "my-account")
+    with pytest.raises(HeroDispenseError, match="scheduled datetime mismatch"):
+        await client.dispense_scheduled_dose("2026-01-01T10:00:00+00:00")
+
+
+@pytest.mark.asyncio
+async def test_websocket_started_and_completed_correlation_and_order():
+    # Unexpected completed before start sent
+    ws = FakeWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {"type": "dispense_frontend_completed", "payload": {"status": True}}
+            ),
+        ]
+    )
+    client = HeroCloudClient(FakeSession(ws), "token", "my-account")
+    with pytest.raises(HeroDispenseError, match="Unexpected"):
+        await client.dispense_scheduled_dose("2026-01-01T10:00:00+00:00")
+
+    # Started account mismatch
+    ws = FakeWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True},
+                }
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_started",
+                    "payload": {"account_id": "wrong-account"},
+                }
+            ),
+        ]
+    )
+    client = HeroCloudClient(FakeSession(ws), "token", "my-account")
+    with pytest.raises(HeroDispenseOutcomeUnknown) as exc:
+        await client.dispense_scheduled_dose("2026-01-01T10:00:00+00:00")
+    assert "account ID mismatch" in str(exc.value.__cause__)
+
+    # Completed account mismatch
+    ws = FakeWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True},
+                }
+            ),
+            message({"type": "dispense_frontend_started", "payload": {}}),
+            message(
+                {
+                    "type": "dispense_frontend_completed",
+                    "payload": {"status": True, "account_id": "wrong-account"},
+                }
+            ),
+        ]
+    )
+    client = HeroCloudClient(FakeSession(ws), "token", "my-account")
+    with pytest.raises(HeroDispenseOutcomeUnknown) as exc:
+        await client.dispense_scheduled_dose("2026-01-01T10:00:00+00:00")
+    assert "account ID mismatch" in str(exc.value.__cause__)
+
+    # Completed scheduled datetime mismatch
+    ws = FakeWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True},
+                }
+            ),
+            message({"type": "dispense_frontend_started", "payload": {}}),
+            message(
+                {
+                    "type": "dispense_frontend_completed",
+                    "payload": {"status": True, "scheduled_datetime": "wrong-time"},
+                }
+            ),
+        ]
+    )
+    client = HeroCloudClient(FakeSession(ws), "token", "my-account")
+    with pytest.raises(HeroDispenseOutcomeUnknown) as exc:
+        await client.dispense_scheduled_dose("2026-01-01T10:00:00+00:00")
+    assert "scheduled datetime mismatch" in str(exc.value.__cause__)
+
+
+@pytest.mark.asyncio
+async def test_websocket_timeout_and_disconnect_after_start():
+    class TimeoutWebSocket(FakeWebSocket):
+        def __init__(self):
+            super().__init__(
+                [
+                    message(
+                        {
+                            "type": "response_authorization",
+                            "payload": {"status": "success"},
+                        }
+                    ),
+                    message(
+                        {
+                            "type": "dispense_frontend_preflight_status",
+                            "payload": {"status": True},
+                        }
+                    ),
+                ]
+            )
+
+        async def __anext__(self):
+            if not self.messages:
+                raise TimeoutError()
+            return self.messages.pop(0)
+
+    ws = TimeoutWebSocket()
+    client = HeroCloudClient(FakeSession(ws), "token", "account")
+    with pytest.raises(HeroDispenseOutcomeUnknown, match="timed out"):
+        await client.dispense_scheduled_dose("2026-01-01T10:00:00+00:00")
+
+    class DisconnectWebSocket(FakeWebSocket):
+        def __init__(self):
+            super().__init__(
+                [
+                    message(
+                        {
+                            "type": "response_authorization",
+                            "payload": {"status": "success"},
+                        }
+                    ),
+                    message(
+                        {
+                            "type": "dispense_frontend_preflight_status",
+                            "payload": {"status": True},
+                        }
+                    ),
+                ]
+            )
+
+        async def __anext__(self):
+            if not self.messages:
+                raise aiohttp.ClientConnectionError("lost")
+            return self.messages.pop(0)
+
+    ws = DisconnectWebSocket()
+    client = HeroCloudClient(FakeSession(ws), "token", "account")
+    with pytest.raises(
+        HeroDispenseOutcomeUnknown, match="closed after dispense started"
+    ):
+        await client.dispense_scheduled_dose("2026-01-01T10:00:00+00:00")

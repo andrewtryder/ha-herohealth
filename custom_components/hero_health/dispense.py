@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, tzinfo
 from typing import Any
 
 from .const import DISPENSE_EARLY_WINDOW, DISPENSE_LATE_WINDOW
@@ -22,11 +23,17 @@ class DispenseEligibility:
 
 
 def evaluate_dispense_eligibility(
-    home: dict[str, Any] | None, now: datetime, requested: str | None = None
+    home: dict[str, Any] | None,
+    now: datetime,
+    requested: str | None = None,
+    journal: Mapping[str, Any] | None = None,
+    device_tz: tzinfo | None = None,
 ) -> DispenseEligibility:
     """Find the earliest Hero-approved dose currently inside the safety window."""
     candidates: list[tuple[datetime, str]] = []
     next_scheduled: tuple[datetime, str] | None = None
+    journal_blocked_reason: str | None = None
+
     for day in (home or {}).get("dates", []):
         if not isinstance(day, dict):
             continue
@@ -37,7 +44,7 @@ def evaluate_dispense_eligibility(
             if not isinstance(value, str) or (requested and value != requested):
                 continue
             try:
-                scheduled = parse_hero_datetime(value)
+                scheduled = parse_hero_datetime(value, device_tz)
             except TypeError, ValueError, AttributeError:
                 continue
             if scheduled >= now and (
@@ -52,6 +59,18 @@ def evaluate_dispense_eligibility(
             opens_at = scheduled - DISPENSE_EARLY_WINDOW
             closes_at = scheduled + DISPENSE_LATE_WINDOW
             if opens_at <= now <= closes_at:
+                if journal and value in journal:
+                    status = (
+                        journal[value].get("status")
+                        if isinstance(journal[value], dict)
+                        else None
+                    )
+                    if status == "outcome_unknown":
+                        journal_blocked_reason = "dispense_outcome_unknown"
+                        continue
+                    if status == "completed":
+                        journal_blocked_reason = "duplicate_recent_dose"
+                        continue
                 candidates.append((scheduled, value))
     if candidates:
         scheduled, value = min(candidates)
@@ -60,6 +79,17 @@ def evaluate_dispense_eligibility(
             value,
             scheduled - DISPENSE_EARLY_WINDOW,
             scheduled + DISPENSE_LATE_WINDOW,
+        )
+    if journal_blocked_reason:
+        return DispenseEligibility(
+            False,
+            reason=journal_blocked_reason,
+            window_opens_at=(
+                (next_scheduled[0] - DISPENSE_EARLY_WINDOW) if next_scheduled else None
+            ),
+            window_closes_at=(
+                (next_scheduled[0] + DISPENSE_LATE_WINDOW) if next_scheduled else None
+            ),
         )
     if next_scheduled:
         scheduled, _ = next_scheduled
