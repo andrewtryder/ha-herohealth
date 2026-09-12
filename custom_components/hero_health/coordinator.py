@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
-from typing import Any
+from datetime import timedelta, tzinfo
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -18,10 +18,16 @@ from .const import DEFAULT_SCAN_INTERVAL_MINUTES
 from .entity import is_low_medication
 from .session import HeroSession
 
+if TYPE_CHECKING:
+    from . import HeroHealthConfigEntry
+
 
 class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(
-        self, hass: HomeAssistant, entry: ConfigEntry, session: HeroSession
+        self,
+        hass: HomeAssistant,
+        entry: HeroHealthConfigEntry | ConfigEntry,
+        session: HeroSession,
     ) -> None:
         super().__init__(
             hass,
@@ -34,6 +40,7 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ),
         )
         self.entry, self.session, self.dispense_lock = entry, session, asyncio.Lock()
+        self.device_tz: tzinfo | None = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -120,6 +127,27 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if isinstance(schedules, dict) and not isinstance(schedules, Exception)
                 else None
             )
+
+            device_timezone = (
+                status.get("device_timezone") if isinstance(status, dict) else None
+            )
+            if isinstance(device_timezone, str) and device_timezone.strip():
+                try:
+                    self.device_tz = await dt_util.async_get_time_zone(
+                        device_timezone.strip()
+                    )
+                except Exception:
+                    self.device_tz = None
+
+            # Normalize stats payload: fallback safely if malformed
+            clean_stats = (
+                stats if isinstance(stats, dict) else (self.data or {}).get("stats", {})
+            )
+            if not isinstance(clean_stats, dict):
+                clean_stats = {}
+            elif "stats" in clean_stats and not isinstance(clean_stats["stats"], dict):
+                clean_stats = {"stats": {}}
+
             return {
                 "offline": offline,
                 "status": status,
@@ -133,11 +161,7 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if isinstance(events, dict)
                     else (self.data or {}).get("events", {})
                 ),
-                "stats": (
-                    stats
-                    if isinstance(stats, dict)
-                    else (self.data or {}).get("stats", {})
-                ),
+                "stats": clean_stats,
             }
         except HeroAuthenticationError as err:
             raise ConfigEntryAuthFailed("Hero authentication required") from err

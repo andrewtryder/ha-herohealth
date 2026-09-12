@@ -41,7 +41,7 @@ class FakeCoordinator:
             },
         }
 
-    def async_add_listener(self, _listener):
+    def async_add_listener(self, _listener, *_args):
         return lambda: None
 
     async def async_request_refresh(self):
@@ -68,7 +68,7 @@ async def test_entity_values_and_slot_identity():
     low = LowMedicationsSensor(coordinator)
     await low.async_update()
     assert coordinator.refreshed
-    assert low.native_value == "Example A, Example B"
+    assert low.native_value == 2
     assert low.extra_state_attributes == {
         "medications": ["Example A", "Example B"],
         "slots": [1, 2],
@@ -305,3 +305,72 @@ def test_coordinator_device_info_metadata():
     coord6 = DummyCoordinator(entry, status_bool_manifest)
     assert coord6.device_info["model"] == "Hero dispenser"
     assert "hw_version" not in coord6.device_info
+
+
+@pytest.mark.asyncio
+async def test_binary_sensor_setup_entry():
+    from custom_components.hero_health.binary_sensor import (
+        DispenseAvailableSensor,
+    )
+    from custom_components.hero_health.binary_sensor import (
+        async_setup_entry as async_setup_binary_entry,
+    )
+
+    coordinator = FakeCoordinator()
+    entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinator=coordinator))
+    added = []
+    await async_setup_binary_entry(None, entry, added.extend)
+    assert len(added) == 12
+    assert any(isinstance(entity, DispenseAvailableSensor) for entity in added)
+
+
+@pytest.mark.asyncio
+async def test_dispense_available_sensor_boundary_timers(monkeypatch):
+    from datetime import timedelta
+
+    from custom_components.hero_health.binary_sensor import DispenseAvailableSensor
+
+    coordinator = FakeCoordinator()
+    sensor = DispenseAvailableSensor(coordinator)
+    now = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+    monkeypatch.setattr(dt_util, "now", lambda: now)
+
+    coordinator.data["doses"] = {
+        "dates": [
+            {
+                "times": [
+                    {
+                        "scheduled_datetime": (now + timedelta(minutes=15)).isoformat(),
+                        "doses": [{"state": "time_to_take"}],
+                    }
+                ]
+            }
+        ]
+    }
+
+    assert sensor.is_on
+    assert sensor.extra_state_attributes["scheduled_datetime"] is not None
+
+    written = []
+    sensor.async_write_ha_state = lambda: written.append(True)
+    scheduled_timers = []
+
+    def fake_track(hass, cb, target):
+        scheduled_timers.append((cb, target))
+        return lambda: None
+
+    monkeypatch.setattr(
+        "custom_components.hero_health.binary_sensor.async_track_point_in_time",
+        fake_track,
+    )
+    sensor.hass = SimpleNamespace()
+
+    await sensor.async_added_to_hass()
+    assert len(scheduled_timers) > 0
+
+    sensor._async_boundary_fired(now)
+    assert len(written) == 1
+
+    sensor._handle_coordinator_update()
+    await sensor.async_will_remove_from_hass()
+    assert len(sensor._timer_unsubs) == 0

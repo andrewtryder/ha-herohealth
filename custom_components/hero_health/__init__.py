@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import ATTR_CONFIG_ENTRY_ID as HA_ATTR_CONFIG_ENTRY_ID
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import Context, HomeAssistant, ServiceCall
 from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
     ConfigEntryNotReady,
     HomeAssistantError,
     ServiceValidationError,
 )
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.util import dt as dt_util
 
 from .api.exceptions import (
@@ -44,13 +46,15 @@ async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
     async def handle_dispense(call: ServiceCall) -> None:
         await _async_dispense(hass, call)
 
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_REFRESH,
         handle_refresh,
         schema=vol.Schema({vol.Required(HA_ATTR_CONFIG_ENTRY_ID): cv.string}),
     )
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_DISPENSE,
         handle_dispense,
@@ -76,6 +80,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: HeroHealthConfigEntry) -
         await session.async_initialize()
         coordinator = HeroCoordinator(hass, entry, session)
         await coordinator.async_config_entry_first_refresh()
+    except HeroAuthenticationError as err:
+        await session.async_close()
+        raise ConfigEntryAuthFailed("Hero authentication failed") from err
     except HeroConnectionError as err:
         await session.async_close()
         raise ConfigEntryNotReady("Unable to connect to Hero") from err
@@ -93,7 +100,20 @@ async def _async_refresh(hass: HomeAssistant, call: ServiceCall) -> None:
 
 
 async def _async_dispense(hass: HomeAssistant, call: ServiceCall) -> None:
-    coordinator = _coordinator_for_call(hass, call)
+    entry_id = call.data.get(HA_ATTR_CONFIG_ENTRY_ID)
+    scheduled = call.data.get(ATTR_SCHEDULED_DATETIME)
+    await async_dispense_dose(
+        hass, entry_id, scheduled, context=getattr(call, "context", None)
+    )
+
+
+async def async_dispense_dose(
+    hass: HomeAssistant,
+    entry_id: str | None,
+    scheduled_datetime: str | None = None,
+    context: Context | None = None,
+) -> None:
+    coordinator = _coordinator_for_entry_id(hass, entry_id)
     async with coordinator.dispense_lock:
         # This action must never rely on a debounced refresh or stale snapshot.
         await coordinator.async_refresh()
@@ -104,11 +124,31 @@ async def _async_dispense(hass: HomeAssistant, call: ServiceCall) -> None:
                 translation_domain=DOMAIN,
                 translation_key="dose_state_unavailable",
             )
-        requested = call.data.get(ATTR_SCHEDULED_DATETIME)
+        session = getattr(coordinator, "session", None)
+        journal = getattr(session, "dispense_journal", None) if session else None
+        device_tz = getattr(coordinator, "device_tz", None)
         evaluation = evaluate_dispense_eligibility(
-            coordinator.data.get("doses"), dt_util.now(), requested
+            coordinator.data.get("doses"),
+            dt_util.now(),
+            scheduled_datetime,
+            journal=journal,
+            device_tz=device_tz,
         )
         if not evaluation.eligible or not evaluation.scheduled_datetime:
+            if evaluation.reason in (
+                "duplicate_recent_dose",
+                "dispense_outcome_unknown",
+            ):
+                raise ServiceValidationError(
+                    (
+                        "The result of this scheduled dose is unknown; confirm the "
+                        "dispenser state before trying again"
+                        if evaluation.reason == "dispense_outcome_unknown"
+                        else "This scheduled dose was already dispensed recently"
+                    ),
+                    translation_domain=DOMAIN,
+                    translation_key=evaluation.reason,
+                )
             raise ServiceValidationError(
                 "No eligible Hero scheduled dose is currently available",
                 translation_domain=DOMAIN,
@@ -122,24 +162,6 @@ async def _async_dispense(hass: HomeAssistant, call: ServiceCall) -> None:
                 },
             )
         selected = evaluation.scheduled_datetime
-        last_id = await coordinator.session.async_last_dispense_id()
-        unknown_check = getattr(
-            coordinator.session, "async_dispense_outcome_unknown", None
-        )
-        unknown = await unknown_check(selected) if unknown_check else False
-        if last_id == selected or unknown:
-            raise ServiceValidationError(
-                (
-                    "The result of this scheduled dose is unknown; confirm the "
-                    "dispenser state before trying again"
-                    if unknown
-                    else "This scheduled dose was already dispensed recently"
-                ),
-                translation_domain=DOMAIN,
-                translation_key=(
-                    "dispense_outcome_unknown" if unknown else "duplicate_recent_dose"
-                ),
-            )
         try:
             await coordinator.session.async_execute(
                 lambda client: client.dispense_scheduled_dose(
@@ -171,10 +193,15 @@ async def _async_dispense(hass: HomeAssistant, call: ServiceCall) -> None:
                 translation_key="authentication_required",
             ) from err
         await coordinator.session.async_save_dispense_id(selected)
+        try:
+            await coordinator.async_request_refresh()
+        except Exception:
+            pass
 
 
-def _coordinator_for_call(hass: HomeAssistant, call: ServiceCall) -> HeroCoordinator:
-    entry_id = call.data.get(HA_ATTR_CONFIG_ENTRY_ID)
+def _coordinator_for_entry_id(
+    hass: HomeAssistant, entry_id: str | None
+) -> HeroCoordinator:
     if not entry_id:
         raise ServiceValidationError(
             "A Hero Health config entry is required",
@@ -188,13 +215,22 @@ def _coordinator_for_call(hass: HomeAssistant, call: ServiceCall) -> HeroCoordin
             translation_domain=DOMAIN,
             translation_key="config_entry_not_found",
         )
-    if selected.runtime_data is None:
+    if (
+        getattr(selected, "state", ConfigEntryState.LOADED)
+        is not ConfigEntryState.LOADED
+        or selected.runtime_data is None
+    ):
         raise ServiceValidationError(
             "The requested Hero Health config entry is not loaded",
             translation_domain=DOMAIN,
             translation_key="config_entry_not_loaded",
         )
     return selected.runtime_data.coordinator
+
+
+def _coordinator_for_call(hass: HomeAssistant, call: ServiceCall) -> HeroCoordinator:
+    entry_id = call.data.get(HA_ATTR_CONFIG_ENTRY_ID)
+    return _coordinator_for_entry_id(hass, entry_id)
 
 
 def _find_eligible_dose(home: dict, requested: str | None) -> str:
@@ -211,6 +247,8 @@ def _find_eligible_dose(home: dict, requested: str | None) -> str:
 
 async def async_unload_entry(hass: HomeAssistant, entry: HeroHealthConfigEntry) -> bool:
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not ok:
+        return False
     await entry.runtime_data.session.async_close()
     entry.runtime_data = None
-    return ok
+    return True

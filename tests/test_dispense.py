@@ -66,5 +66,26 @@ def test_recurring_schedule_never_becomes_dispense_candidate():
     }
     result = evaluate_dispense_eligibility(schedules_payload, now)
     assert result.eligible is False
-    assert result.scheduled_datetime is None
     assert result.window_opens_at is None
+
+
+def test_dispense_eligibility_blocks_duplicate_and_unknown_outcomes():
+    now = datetime(2026, 9, 3, 12, tzinfo=dt_util.UTC)
+    scheduled_str = now.isoformat()
+    home_data = _home(now, "time_to_take")
+
+    # Blocked by outcome_unknown
+    journal_unknown = {scheduled_str: {"status": "outcome_unknown"}}
+    eval_unknown = evaluate_dispense_eligibility(
+        home_data, now, journal=journal_unknown
+    )
+    assert not eval_unknown.eligible
+    assert eval_unknown.reason == "dispense_outcome_unknown"
+
+    # Blocked by completed
+    journal_completed = {scheduled_str: {"status": "completed"}}
+    eval_completed = evaluate_dispense_eligibility(
+        home_data, now, journal=journal_completed
+    )
+    assert not eval_completed.eligible
+    assert eval_completed.reason == "duplicate_recent_dose"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from enum import StrEnum
 from typing import Any
 
 import aiohttp
@@ -21,6 +22,15 @@ from .exceptions import (
 CLOUD_BASE_URL = "https://cloud.herohealth.com"
 HERO_CLIENT = "HeroApp;android-33;3.8.6"
 OKHTTP_USER_AGENT = "okhttp/4.9.2"
+
+
+class DispensePhase(StrEnum):
+    """Protocol state machine phases for safety-gated WebSocket dispensing."""
+
+    AUTHORIZING = "authorizing"
+    PREFLIGHT_SENT = "preflight_sent"
+    START_SENT = "start_sent"
+    COMPLETED = "completed"
 
 
 class HeroCloudClient:
@@ -156,6 +166,7 @@ class HeroCloudClient:
         on_start_sent: Callable[[], Awaitable[None]] | None,
     ) -> dict[str, Any]:
         headers = self._headers()
+        phase = DispensePhase.AUTHORIZING
         start_sent = False
         try:
             async with self._session.ws_connect(
@@ -192,11 +203,23 @@ class HeroCloudClient:
                             raise HeroDispenseError(
                                 "Hero WebSocket returned malformed data"
                             )
-                        if kind == "response_authorization":
+
+                        if kind == "request_ping":
+                            await ws.send_json({"type": "response_ping"})
+                        elif kind == "dispense_frontend_message":
+                            if body.get("message"):
+                                messages.append(str(body["message"]))
+                        elif kind == "response_authorization":
+                            if phase != DispensePhase.AUTHORIZING:
+                                raise HeroDispenseError(
+                                    "Unexpected authorization response in phase "
+                                    f"{phase.value}"
+                                )
                             if body.get("status") != "success":
                                 raise HeroDispenseError(
                                     "Hero WebSocket authorization failed"
                                 )
+                            phase = DispensePhase.PREFLIGHT_SENT
                             await ws.send_json(
                                 {
                                     "type": "dispense_frontend_preflight_check",
@@ -208,6 +231,26 @@ class HeroCloudClient:
                                 }
                             )
                         elif kind == "dispense_frontend_preflight_status":
+                            if phase != DispensePhase.PREFLIGHT_SENT:
+                                raise HeroDispenseError(
+                                    "Unexpected preflight status in phase "
+                                    f"{phase.value}"
+                                )
+                            # Correlate account and scheduled datetime if supplied
+                            if (
+                                body.get("account_id")
+                                and self.account_id
+                                and str(body.get("account_id")) != str(self.account_id)
+                            ):
+                                raise HeroDispenseError(
+                                    "Preflight check account ID mismatch"
+                                )
+                            if body.get("scheduled_datetime") and str(
+                                body.get("scheduled_datetime")
+                            ) != str(scheduled_datetime):
+                                raise HeroDispenseError(
+                                    "Preflight check scheduled datetime mismatch"
+                                )
                             if (
                                 body.get("status") is not True
                                 and body.get("can_dispense") is not True
@@ -220,6 +263,7 @@ class HeroCloudClient:
                             if on_start_sent:
                                 await on_start_sent()
                             start_sent = True
+                            phase = DispensePhase.START_SENT
                             await ws.send_json(
                                 {
                                     "type": "dispense_frontend_start",
@@ -230,17 +274,45 @@ class HeroCloudClient:
                                     },
                                 }
                             )
-                        elif kind == "dispense_frontend_message" and body.get(
-                            "message"
-                        ):
-                            messages.append(str(body["message"]))
-                        elif kind == "request_ping":
-                            await ws.send_json({"type": "response_ping"})
+                        elif kind == "dispense_frontend_started":
+                            if phase != DispensePhase.START_SENT:
+                                raise HeroDispenseError(
+                                    "Unexpected dispense started event in phase "
+                                    f"{phase.value}"
+                                )
+                            if (
+                                body.get("account_id")
+                                and self.account_id
+                                and str(body.get("account_id")) != str(self.account_id)
+                            ):
+                                raise HeroDispenseError(
+                                    "Dispense started account ID mismatch"
+                                )
                         elif kind == "dispense_frontend_completed":
+                            if phase != DispensePhase.START_SENT:
+                                raise HeroDispenseError(
+                                    "Unexpected dispense completion in phase "
+                                    f"{phase.value}"
+                                )
+                            if (
+                                body.get("account_id")
+                                and self.account_id
+                                and str(body.get("account_id")) != str(self.account_id)
+                            ):
+                                raise HeroDispenseError(
+                                    "Dispense completed account ID mismatch"
+                                )
+                            if body.get("scheduled_datetime") and str(
+                                body.get("scheduled_datetime")
+                            ) != str(scheduled_datetime):
+                                raise HeroDispenseError(
+                                    "Dispense completed scheduled datetime mismatch"
+                                )
                             if body.get("status") is not True:
                                 raise HeroDispenseError(
                                     "Hero reported dispense failure"
                                 )
+                            phase = DispensePhase.COMPLETED
                             return {
                                 "success": True,
                                 "status": "completed",

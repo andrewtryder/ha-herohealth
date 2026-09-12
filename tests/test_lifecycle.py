@@ -134,7 +134,12 @@ class FakeSession:
         self.client = SimpleNamespace()
         self.closed = False
         self.last = None
+        self._journal = {}
         self.executed = AsyncMock()
+
+    @property
+    def dispense_journal(self):
+        return self._journal
 
     async def async_initialize(self):
         return self.client
@@ -145,14 +150,21 @@ class FakeSession:
     async def async_last_dispense_id(self):
         return self.last
 
-    async def async_save_dispense_id(self, value):
+    async def async_save_dispense_id(self, value, outcome="completed"):
         self.last = value
+        self._journal[value] = {
+            "status": outcome,
+            "recorded_at": dt_util.now().isoformat(),
+        }
 
-    async def async_mark_dispense_start_sent(self, _value):
-        return None
+    async def async_mark_dispense_start_sent(self, value):
+        self._journal[value] = {
+            "status": "outcome_unknown",
+            "recorded_at": dt_util.now().isoformat(),
+        }
 
-    async def async_dispense_outcome_unknown(self, _value):
-        return False
+    async def async_dispense_outcome_unknown(self, value):
+        return self._journal.get(value, {}).get("status") == "outcome_unknown"
 
     async def async_execute(self, operation):
         self.executed = await operation(
@@ -167,6 +179,7 @@ class FakeCoordinator:
         self.data = {"doses": {"dates": []}}
         self.refreshed = 0
         self.last_update_success = True
+        self.device_tz = None
 
     async def async_config_entry_first_refresh(self):
         self.refreshed += 1
@@ -183,7 +196,12 @@ class RegistrySession:
 
     def __init__(self, *_args):
         self.last = None
+        self._journal = {}
         self.async_execute = AsyncMock(side_effect=self._execute)
+
+    @property
+    def dispense_journal(self):
+        return self._journal
 
     async def async_initialize(self):
         return SimpleNamespace()
@@ -196,14 +214,21 @@ class RegistrySession:
     async def async_last_dispense_id(self):
         return self.last
 
-    async def async_save_dispense_id(self, identifier):
+    async def async_save_dispense_id(self, identifier, outcome="completed"):
         self.last = identifier
+        self._journal[identifier] = {
+            "status": outcome,
+            "recorded_at": dt_util.now().isoformat(),
+        }
 
-    async def async_mark_dispense_start_sent(self, _value):
-        return None
+    async def async_mark_dispense_start_sent(self, value):
+        self._journal[value] = {
+            "status": "outcome_unknown",
+            "recorded_at": dt_util.now().isoformat(),
+        }
 
-    async def async_dispense_outcome_unknown(self, _value):
-        return False
+    async def async_dispense_outcome_unknown(self, value):
+        return self._journal.get(value, {}).get("status") == "outcome_unknown"
 
     async def async_close(self):
         return None
@@ -218,6 +243,7 @@ class RegistryCoordinator:
         self.async_request_refresh = AsyncMock()
         self.async_refresh = AsyncMock()
         self.last_update_success = True
+        self.device_tz = None
 
     async def async_config_entry_first_refresh(self):
         await self.first_refresh()
@@ -245,6 +271,9 @@ async def _setup_registry_entry(hass, monkeypatch, account_id="account-1"):
         hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
     )
     assert await async_setup_entry(hass, entry)
+    from homeassistant.config_entries import ConfigEntryState
+
+    entry.mock_state(hass, ConfigEntryState.LOADED)
     return entry
 
 
@@ -1043,3 +1072,117 @@ async def test_coordinator_rate_limit_is_transient_and_uses_retry_after(hass):
             hass, entry, SimpleNamespace(async_execute=execute)
         )._async_update_data()
     assert raised.value.retry_after == 120
+
+
+@pytest.mark.asyncio
+async def test_setup_translates_auth_failure_to_config_entry_auth_failed(monkeypatch):
+    class FailingAuthSession(FakeSession):
+        async def async_initialize(self):
+            raise HeroAuthenticationError("invalid credentials")
+
+    entry = SimpleNamespace(
+        entry_id="entry",
+        data={"email": "test@example.invalid", "password": "fake"},
+        runtime_data=None,
+    )
+    hass = SimpleNamespace(services=FakeServices(), config_entries=FakeEntries([entry]))
+    monkeypatch.setattr("custom_components.hero_health.HeroSession", FailingAuthSession)
+    with pytest.raises(ConfigEntryAuthFailed):
+        await async_setup_entry(hass, entry)
+
+
+@pytest.mark.asyncio
+async def test_unload_entry_preserves_runtime_data_when_platforms_fail_unload():
+    session = FakeSession()
+    coordinator = FakeCoordinator(None, None, session)
+    entry = SimpleNamespace(
+        entry_id="entry",
+        runtime_data=SimpleNamespace(session=session, coordinator=coordinator),
+    )
+
+    class FailingUnloadEntries(FakeEntries):
+        async def async_unload_platforms(self, _entry, _platforms):
+            return False
+
+    hass = SimpleNamespace(config_entries=FailingUnloadEntries([entry]))
+    result = await async_unload_entry(hass, entry)
+    assert result is False
+    assert entry.runtime_data is not None
+    assert session.closed is False
+
+
+@pytest.mark.asyncio
+async def test_coordinator_for_entry_id_rejects_unloaded_entry():
+    from homeassistant.config_entries import ConfigEntryState
+
+    from custom_components.hero_health import _coordinator_for_entry_id
+
+    entry = SimpleNamespace(
+        entry_id="entry-unloaded",
+        domain=DOMAIN,
+        state=ConfigEntryState.NOT_LOADED,
+        runtime_data=None,
+    )
+    hass = SimpleNamespace(config_entries=FakeEntries([entry]))
+    with pytest.raises(ServiceValidationError, match="not loaded"):
+        _coordinator_for_entry_id(hass, "entry-unloaded")
+
+
+@pytest.mark.asyncio
+async def test_dispense_dose_ignores_refresh_failure_after_success():
+    from custom_components.hero_health import async_dispense_dose
+
+    session = FakeSession()
+    entry = SimpleNamespace(entry_id="entry", runtime_data=None)
+    coordinator = FakeCoordinator(None, entry, session)
+    dose = dt_util.now().isoformat()
+    coordinator.data = {
+        "doses": {
+            "dates": [
+                {
+                    "times": [
+                        {
+                            "scheduled_datetime": dose,
+                            "doses": [{"state": "time_to_take"}],
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    async def failing_request_refresh():
+        raise RuntimeError("refresh failed")
+
+    coordinator.async_request_refresh = failing_request_refresh
+    entry.runtime_data = SimpleNamespace(coordinator=coordinator)
+    hass = SimpleNamespace(config_entries=FakeEntries([entry]))
+
+    await async_dispense_dose(hass, "entry")
+    assert session.last == dose
+
+
+@pytest.mark.asyncio
+async def test_admin_services_registered_with_admin_permission(hass, monkeypatch):
+    import homeassistant.exceptions
+    from homeassistant.core import Context
+
+    entry = await _setup_registry_entry(hass, monkeypatch)
+    admin_service = hass.services.has_service(DOMAIN, SERVICE_DISPENSE)
+    assert admin_service is True
+
+    from homeassistant.auth.const import GROUP_ID_USER
+
+    user = await hass.auth.async_create_user("Regular User", group_ids=[GROUP_ID_USER])
+    user.is_owner = False
+    assert user.is_admin is False
+    non_admin_context = Context(user_id=user.id)
+
+    with pytest.raises(homeassistant.exceptions.Unauthorized):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_DISPENSE,
+            {"config_entry_id": entry.entry_id},
+            context=non_admin_context,
+            blocking=True,
+        )

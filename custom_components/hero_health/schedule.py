@@ -32,7 +32,7 @@ def resolve_schedule_timezone(device_timezone: str | None) -> tzinfo:
         tz = dt_util.get_time_zone(device_timezone.strip())
         if tz is not None:
             return tz
-    return dt_util.DEFAULT_TIME_ZONE
+    return dt_util.get_default_time_zone()
 
 
 def next_recurring_schedule(
@@ -74,7 +74,7 @@ def next_recurring_schedule(
     if not isinstance(schedules, list) or not schedules:
         return None
 
-    tz = target_tz or dt_util.DEFAULT_TIME_ZONE
+    tz = target_tz or dt_util.get_default_time_zone()
     now_tz = now if now.tzinfo is not None else now.replace(tzinfo=tz)
     now_tz = now_tz.astimezone(tz)
 

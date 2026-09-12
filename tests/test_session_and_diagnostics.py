@@ -195,3 +195,145 @@ async def test_diagnostics_privacy_with_sentinels():
     assert PRIVATE_ACCOUNT_SENTINEL not in serialized
     assert PRIVATE_TIMEZONE_SENTINEL not in serialized
     assert result["coordinator"]["schedules"] == {"usable": True}
+
+
+@pytest.mark.asyncio
+async def test_session_dispense_journal_pruning_and_blocking():
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._tokens = HeroTokens("access", "refresh", 3600, time.time())
+    session._identity = {"email": "user@example.invalid", "account_id": "account"}
+    session._store = FakeStore()
+    session._state_lock = asyncio.Lock()
+    session._dispense_journal = {}
+
+    now = dt_util.now()
+    old_dose = (now - timedelta(hours=7)).isoformat()
+    recent_dose = (now - timedelta(minutes=5)).isoformat()
+    unknown_dose = (now - timedelta(minutes=2)).isoformat()
+
+    await session.async_save_dispense_id(old_dose)
+    await session.async_save_dispense_id(recent_dose)
+    await session.async_mark_dispense_start_sent(unknown_dose)
+
+    # Prune should remove old_dose because it's past DISPENSE_LATE_WINDOW (6h)
+    session._prune_dispense_journal()
+    assert old_dose not in session.dispense_journal
+    assert recent_dose in session.dispense_journal
+    assert unknown_dose in session.dispense_journal
+
+    blocked, reason = session.is_dispense_blocked(recent_dose)
+    assert blocked is True
+    assert reason == "duplicate_recent_dose"
+
+    blocked, reason = session.is_dispense_blocked(unknown_dose)
+    assert blocked is True
+    assert reason == "dispense_outcome_unknown"
+
+    blocked, reason = session.is_dispense_blocked("not-in-journal")
+    assert blocked is False
+    assert reason is None
+
+
+@pytest.mark.asyncio
+async def test_session_non_persist_paths():
+    from unittest.mock import Mock
+
+    session = object.__new__(HeroSession)
+    session._persist = False
+    mock_http = SimpleNamespace(detach=Mock())
+    session._http = mock_http
+    session._dispense_journal = {}
+
+    await session.async_save_dispense_id("dose-1")
+    assert await session.async_last_dispense_id() is None
+    await session.async_mark_dispense_start_sent("dose-2")
+    assert await session.async_dispense_outcome_unknown("dose-2") is False
+
+    await session.async_close()
+    mock_http.detach.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_session_legacy_state_migration():
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._email = "e@x.com"
+    session.account_id = "acc-1"
+    session._lock = asyncio.Lock()
+    session._state_lock = asyncio.Lock()
+    session._identity = {"email": "e@x.com", "account_id": "acc-1"}
+    now_ts = time.time()
+    session._store = FakeStore(
+        {
+            "last_dispense_id": "legacy_dose_1",
+            "dispense_attempt": {
+                "state": "outcome_unknown",
+                "scheduled_datetime": "legacy_dose_2",
+            },
+            "tokens": {
+                "access_token": "acc",
+                "refresh_token": "ref",
+                "expires_in": 3600,
+                "created_at": now_ts,
+            },
+            "identity": {"email": "e@x.com", "account_id": "acc-1"},
+        }
+    )
+    session._http = SimpleNamespace()
+    session._auth = SimpleNamespace()
+    session._dispense_journal = {}
+    await session.async_initialize()
+    assert "legacy_dose_1" in session.dispense_journal
+    assert session.dispense_journal["legacy_dose_1"]["status"] == "completed"
+    assert "legacy_dose_2" in session.dispense_journal
+    assert session.dispense_journal["legacy_dose_2"]["status"] == "outcome_unknown"
+
+
+@pytest.mark.asyncio
+async def test_session_execute_reauth_fallback():
+    from unittest.mock import Mock
+
+    from custom_components.hero_health.api.exceptions import HeroAuthenticationError
+
+    session = object.__new__(HeroSession)
+    session._lock = asyncio.Lock()
+    session._state_lock = asyncio.Lock()
+    session._tokens = HeroTokens("bad", "bad-ref", 3600, 0)
+    session._email = "user@example.invalid"
+    session._password = "secret"
+    session._persist = False
+    session._store = FakeStore()
+    session.client = SimpleNamespace(set_tokens=Mock())
+
+    class FailingAuth:
+        def __init__(self):
+            self.refresh_calls = 0
+            self.login_calls = 0
+
+        async def refresh_access_token(self, _tok):
+            self.refresh_calls += 1
+            raise HeroAuthenticationError("refresh failed")
+
+        async def login_with_password(self, _email, _pwd):
+            self.login_calls += 1
+            return HeroTokens("good-acc", "good-ref", 3600, time.time())
+
+    session._auth = FailingAuth()
+
+    first_attempt = True
+
+    async def op(client):
+        nonlocal first_attempt
+        if first_attempt:
+            first_attempt = False
+            raise HeroAuthenticationError("expired")
+        return "success"
+
+    result = await session.async_execute(op)
+    assert result == "success"
+    assert session._auth.login_calls >= 1
