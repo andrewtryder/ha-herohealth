@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/andrewtryder/ha-herohealth/compare/v0.4.1...v0.5.0) (2026-09-12)
+
+
+### Features
+
+* harden remote dispense safety, lifecycle, and HA 2026 architecture ([#16](https://github.com/andrewtryder/ha-herohealth/issues/16)) ([cd0a23b](https://github.com/andrewtryder/ha-herohealth/commit/cd0a23b605bc8d5cc275721d07389bb979033309))
+
 ## [0.4.1](https://github.com/andrewtryder/ha-herohealth/compare/v0.4.0...v0.4.1) (2026-09-12)
 
 
