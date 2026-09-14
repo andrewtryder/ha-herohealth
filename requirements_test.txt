@@ -4,5 +4,5 @@ pytest==9.0.3
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 pytest-homeassistant-custom-component==0.13.357
-ruff==0.16.5
+ruff==0.16.6
 pre-commit==4.6.2
