@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta, tzinfo
+from datetime import datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -41,6 +41,20 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.entry, self.session, self.dispense_lock = entry, session, asyncio.Lock()
         self.device_tz: tzinfo | None = None
+        self._eligibility_refresh_task: asyncio.Task[None] | None = None
+        self._last_eligibility_refresh_boundary: datetime | None = None
+
+    def async_schedule_eligibility_refresh(self, boundary: datetime) -> None:
+        """Refresh once when a scheduled-dose eligibility boundary is reached."""
+        if boundary == self._last_eligibility_refresh_boundary:
+            return
+        self._last_eligibility_refresh_boundary = boundary
+        task = self._eligibility_refresh_task
+        if task is not None and not task.done():
+            return
+        self._eligibility_refresh_task = self.hass.async_create_task(
+            self.async_request_refresh()
+        )
 
     @property
     def device_info(self) -> DeviceInfo:

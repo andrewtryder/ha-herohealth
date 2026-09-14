@@ -1,6 +1,7 @@
 """Integration setup, actions, and session lifecycle behavior."""
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -736,6 +737,20 @@ async def test_coordinator_update_data_error_handling(hass):
     )
     with pytest.raises(UpdateFailed):
         await coord_status_exc._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_scheduled_eligibility_refresh_is_deduplicated(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
+    coordinator.async_request_refresh = AsyncMock()
+    boundary = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+
+    coordinator.async_schedule_eligibility_refresh(boundary)
+    coordinator.async_schedule_eligibility_refresh(boundary)
+    await hass.async_block_till_done()
+
+    coordinator.async_request_refresh.assert_awaited_once()
 
 
 @pytest.mark.asyncio

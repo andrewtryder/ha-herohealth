@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import Any
@@ -22,6 +23,7 @@ from .exceptions import (
 CLOUD_BASE_URL = "https://cloud.herohealth.com"
 HERO_CLIENT = "HeroApp;android-33;3.8.6"
 OKHTTP_USER_AGENT = "okhttp/4.9.2"
+_LOGGER = logging.getLogger(__name__)
 
 
 class DispensePhase(StrEnum):
@@ -203,6 +205,18 @@ class HeroCloudClient:
                             raise HeroDispenseError(
                                 "Hero WebSocket returned malformed data"
                             )
+                        _LOGGER.debug(
+                            "Hero dispense WebSocket event type=%r phase=%s "
+                            "has_status=%s status_is_true=%s has_can_dispense=%s "
+                            "can_dispense_is_true=%s has_error=%s",
+                            kind,
+                            phase.value,
+                            "status" in body,
+                            body.get("status") is True,
+                            "can_dispense" in body,
+                            body.get("can_dispense") is True,
+                            "error" in body,
+                        )
 
                         if kind == "request_ping":
                             await ws.send_json({"type": "response_ping"})

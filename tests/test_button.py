@@ -17,9 +17,13 @@ class FakeCoordinator:
         self.device_info = {"identifiers": {(DOMAIN, "account-1")}}
         self.last_update_success = True
         self.data = {"doses": {"dates": []}}
+        self.eligibility_refreshes = 0
 
     def async_add_listener(self, _listener, *_args):
         return lambda: None
+
+    def async_schedule_eligibility_refresh(self, _boundary):
+        self.eligibility_refreshes += 1
 
 
 def _eligible_doses(scheduled: datetime):
@@ -113,6 +117,48 @@ async def test_button_boundary_timers(monkeypatch):
     button._handle_coordinator_update()
     await button.async_will_remove_from_hass()
     assert len(button._timer_unsubs) == 0
+
+
+@pytest.mark.asyncio
+async def test_button_scheduled_time_refreshes_authoritative_dose_state(monkeypatch):
+    coordinator = FakeCoordinator()
+    button = DispenseScheduledDoseButton(coordinator)
+    now = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+    monkeypatch.setattr(dt_util, "now", lambda: now)
+    scheduled = now + timedelta(minutes=15)
+    coordinator.data["doses"] = {
+        "dates": [
+            {
+                "times": [
+                    {
+                        "scheduled_datetime": scheduled.isoformat(),
+                        "doses": [{"state": "not_time_to_take"}],
+                    }
+                ]
+            }
+        ]
+    }
+    assert not button.available
+
+    timers = []
+    monkeypatch.setattr(
+        "custom_components.hero_health.button.async_track_point_in_time",
+        lambda _hass, callback, target: (
+            timers.append((callback, target)) or (lambda: None)
+        ),
+    )
+    button.hass = SimpleNamespace()
+    button.async_write_ha_state = lambda: None
+    await button.async_added_to_hass()
+
+    scheduled_callback = next(
+        callback for callback, target in timers if target == scheduled
+    )
+    scheduled_callback(scheduled)
+    assert coordinator.eligibility_refreshes == 1
+
+    coordinator.data["doses"] = _eligible_doses(scheduled)
+    assert button.available
 
 
 @pytest.mark.asyncio
