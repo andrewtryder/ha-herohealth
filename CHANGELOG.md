@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.0...v0.5.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* refresh scheduled-dose eligibility at dose time ([#18](https://github.com/andrewtryder/ha-herohealth/issues/18)) ([fa0fb31](https://github.com/andrewtryder/ha-herohealth/commit/fa0fb31abc73f7bf9abaa3cb75235ebbda7b5934))
+
 ## [0.5.0](https://github.com/andrewtryder/ha-herohealth/compare/v0.4.1...v0.5.0) (2026-09-12)
 
 
