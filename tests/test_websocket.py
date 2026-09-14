@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 
 import aiohttp
 import pytest
@@ -426,3 +427,43 @@ async def test_websocket_timeout_and_disconnect_after_start():
         HeroDispenseOutcomeUnknown, match="closed after dispense started"
     ):
         await client.dispense_scheduled_dose("2026-01-01T10:00:00+00:00")
+
+
+@pytest.mark.asyncio
+async def test_websocket_debug_events_exclude_sensitive_payload_values(caplog):
+    ws = FakeWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True},
+                }
+            ),
+            message(
+                {
+                    "type": "unrecognized_terminal_event",
+                    "payload": {
+                        "account_id": "sensitive-account",
+                        "scheduled_datetime": "sensitive-scheduled-time",
+                        "error": "sensitive-error",
+                    },
+                }
+            ),
+        ]
+    )
+    client = HeroCloudClient(FakeSession(ws), "token", "account")
+
+    with caplog.at_level(
+        logging.DEBUG, logger="custom_components.hero_health.api.client"
+    ):
+        with pytest.raises(HeroDispenseOutcomeUnknown):
+            await client.dispense_scheduled_dose("scheduled")
+
+    assert "unrecognized_terminal_event" in caplog.text
+    assert "has_error=True" in caplog.text
+    assert "sensitive-account" not in caplog.text
+    assert "sensitive-scheduled-time" not in caplog.text
+    assert "sensitive-error" not in caplog.text

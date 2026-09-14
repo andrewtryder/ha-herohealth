@@ -105,12 +105,32 @@ class DispenseAvailableSensor(HeroEntity, BinarySensorEntity):
                         self.hass, self._async_boundary_fired, boundary
                     )
                 )
+        if evaluation.scheduled_at and evaluation.scheduled_at > now:
+            self._timer_unsubs.append(
+                async_track_point_in_time(
+                    self.hass,
+                    lambda now: self._async_scheduled_time_fired(
+                        now, evaluation.scheduled_at
+                    ),
+                    evaluation.scheduled_at,
+                )
+            )
 
     @callback
     def _async_boundary_fired(self, _now: Any) -> None:
         """Update HA state and rearm boundary timers."""
         self._schedule_boundary_timers()
         self.async_write_ha_state()
+
+    @callback
+    def _async_scheduled_time_fired(self, now: Any, scheduled_at: Any) -> None:
+        """Fetch Hero's authoritative dose state at the scheduled dose time."""
+        schedule_refresh = getattr(
+            self.coordinator, "async_schedule_eligibility_refresh", None
+        )
+        if callable(schedule_refresh):
+            schedule_refresh(scheduled_at)
+        self._async_boundary_fired(now)
 
     async def async_added_to_hass(self) -> None:
         """Arm boundary timers on entity addition."""

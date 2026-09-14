@@ -17,6 +17,7 @@ class DispenseEligibility:
 
     eligible: bool
     scheduled_datetime: str | None = None
+    scheduled_at: datetime | None = None
     window_opens_at: datetime | None = None
     window_closes_at: datetime | None = None
     reason: str | None = None
@@ -77,12 +78,14 @@ def evaluate_dispense_eligibility(
         return DispenseEligibility(
             True,
             value,
+            scheduled,
             scheduled - DISPENSE_EARLY_WINDOW,
             scheduled + DISPENSE_LATE_WINDOW,
         )
     if journal_blocked_reason:
         return DispenseEligibility(
             False,
+            scheduled_at=next_scheduled[0] if next_scheduled else None,
             reason=journal_blocked_reason,
             window_opens_at=(
                 (next_scheduled[0] - DISPENSE_EARLY_WINDOW) if next_scheduled else None
@@ -95,6 +98,7 @@ def evaluate_dispense_eligibility(
         scheduled, _ = next_scheduled
         return DispenseEligibility(
             False,
+            scheduled_at=scheduled,
             window_opens_at=scheduled - DISPENSE_EARLY_WINDOW,
             window_closes_at=scheduled + DISPENSE_LATE_WINDOW,
             reason="not_eligible",
