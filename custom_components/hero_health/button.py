@@ -149,4 +149,5 @@ class DispenseScheduledDoseButton(HeroEntity, ButtonEntity):
             SERVICE_DISPENSE,
             {"config_entry_id": self.coordinator.entry.entry_id},
             blocking=True,
+            context=self._context,
         )

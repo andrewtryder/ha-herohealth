@@ -160,7 +160,15 @@ The integration includes a safety-gated button entity (`button.hero_health_dispe
 
 Home Assistant's recorder stores entity state changes over time. To protect sensitive medication information and keep your database performant:
 
-- Detailed medication lists, names, and slot compositions are marked unrecorded in state attributes (`_unrecorded_attributes`), keeping medication names out of long-term history logs.
+- Detailed medication attributes (such as pill types, exact counts, and schedule details) are marked unrecorded (`_unrecorded_attributes`), excluding them from Recorder history attributes.
+- Individual slot sensors (`sensor.hero_health_slot_<n>`) expose the current medication name (or "Empty") as their entity state for dashboard visibility. Home Assistant Recorder may store these state strings in database history and backups.
+- Users who wish to keep medication names out of database history entirely can disable individual slot sensor entities in Home Assistant, or exclude them from database history in `configuration.yaml` via Recorder settings:
+  ```yaml
+  recorder:
+    exclude:
+      entity_globs:
+        - sensor.hero_health_slot_*
+  ```
 - Diagnostic downloads automatically sanitize credentials, tokens, account identifiers, and private health data.
 
 ---

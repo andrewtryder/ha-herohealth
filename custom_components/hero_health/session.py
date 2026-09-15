@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import datetime, tzinfo
 from typing import Any
 
 import aiohttp
@@ -30,6 +30,7 @@ class HeroSession:
         account_id: str | None,
         *,
         persist: bool = True,
+        device_tz: tzinfo | None = None,
     ) -> None:
         self._hass, self._email, self._password, self.account_id = (
             hass,
@@ -37,6 +38,7 @@ class HeroSession:
             password,
             account_id,
         )
+        self._device_tz: tzinfo | None = device_tz
         self._identity = {
             "email": email.strip().lower(),
             "account_id": account_id or "",
@@ -61,6 +63,39 @@ class HeroSession:
         self._lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
 
+    @property
+    def device_tz(self) -> tzinfo | None:
+        return getattr(self, "_device_tz", None)
+
+    @device_tz.setter
+    def device_tz(self, value: tzinfo | None) -> None:
+        self._device_tz = value
+        if value is not None:
+            journal = self._get_journal()
+            for sched_str, entry in journal.items():
+                if isinstance(entry, dict) and "expires_at" not in entry:
+                    exp = self._compute_expiry(sched_str, device_tz=value)
+                    if exp is not None:
+                        entry["expires_at"] = exp
+
+    def _compute_expiry(
+        self, sched_str: str, device_tz: tzinfo | None = None
+    ) -> float | None:
+        """Compute the absolute expiration timestamp for a scheduled dose identifier."""
+        try:
+            parsed = datetime.fromisoformat(
+                sched_str.replace("Z", "+00:00").replace(" ", "T")
+            )
+            if parsed.tzinfo is not None:
+                return parsed.timestamp() + DISPENSE_LATE_WINDOW.total_seconds()
+            tz = device_tz or self.device_tz
+            if tz is not None:
+                aware = parsed.replace(tzinfo=tz)
+                return aware.timestamp() + DISPENSE_LATE_WINDOW.total_seconds()
+        except Exception:
+            pass
+        return None
+
     async def async_initialize(self) -> HeroCloudClient:
         self._tokens = None
         saved = (await self._store.async_load() or {}) if self._persist else {}
@@ -73,11 +108,20 @@ class HeroSession:
                 pass
         journal = saved.get("dispense_journal") if isinstance(saved, dict) else None
         if identity_matches and isinstance(journal, dict):
-            self._dispense_journal = {
-                k: v
-                for k, v in journal.items()
-                if isinstance(k, str) and isinstance(v, dict) and "status" in v
-            }
+            self._dispense_journal = {}
+            for k, v in journal.items():
+                if isinstance(k, str) and isinstance(v, dict) and "status" in v:
+                    record: dict[str, Any] = {
+                        "status": v["status"],
+                        "recorded_at": float(v.get("recorded_at", 0)),
+                    }
+                    if "expires_at" in v and isinstance(v["expires_at"], (int, float)):
+                        record["expires_at"] = float(v["expires_at"])
+                    else:
+                        exp = self._compute_expiry(k)
+                        if exp is not None:
+                            record["expires_at"] = exp
+                    self._dispense_journal[k] = record
         else:
             self._dispense_journal = {}
 
@@ -90,10 +134,14 @@ class HeroSession:
                 isinstance(last_dispense_id, str)
                 and last_dispense_id not in self._dispense_journal
             ):
-                self._dispense_journal[last_dispense_id] = {
+                rec: dict[str, Any] = {
                     "status": "completed",
                     "recorded_at": time.time(),
                 }
+                exp = self._compute_expiry(last_dispense_id)
+                if exp is not None:
+                    rec["expires_at"] = exp
+                self._dispense_journal[last_dispense_id] = rec
             attempt = saved.get("dispense_attempt") if isinstance(saved, dict) else None
             if (
                 isinstance(attempt, dict)
@@ -102,10 +150,14 @@ class HeroSession:
             ):
                 sched = attempt["scheduled_datetime"]
                 if sched not in self._dispense_journal:
-                    self._dispense_journal[sched] = {
+                    rec = {
                         "status": "outcome_unknown",
                         "recorded_at": time.time(),
                     }
+                    exp = self._compute_expiry(sched)
+                    if exp is not None:
+                        rec["expires_at"] = exp
+                    self._dispense_journal[sched] = rec
 
         self._prune_dispense_journal()
         self._sync_legacy_fields()
@@ -158,19 +210,22 @@ class HeroSession:
         to_delete: list[str] = []
         journal = self._get_journal()
         for sched_str, entry in journal.items():
-            try:
-                sched_dt = datetime.fromisoformat(
-                    sched_str.replace("Z", "+00:00").replace(" ", "T")
-                )
-                if sched_dt.tzinfo is None:
-                    sched_dt = sched_dt.replace(tzinfo=UTC)
-                expire_ts = sched_dt.timestamp() + DISPENSE_LATE_WINDOW.total_seconds()
+            if not isinstance(entry, dict):
+                continue
+            expire_ts = entry.get("expires_at")
+            if expire_ts is None:
+                expire_ts = self._compute_expiry(sched_str)
+                if expire_ts is not None:
+                    entry["expires_at"] = expire_ts
+
+            if expire_ts is not None:
                 if now_ts > expire_ts:
                     to_delete.append(sched_str)
-            except Exception:
+            else:
                 recorded_at = entry.get("recorded_at", 0)
-                if now_ts > recorded_at + 86400:
-                    to_delete.append(sched_str)
+                if isinstance(recorded_at, (int, float)) and recorded_at > 0:
+                    if now_ts > recorded_at + 172800:
+                        to_delete.append(sched_str)
         for k in to_delete:
             journal.pop(k, None)
 
@@ -182,9 +237,10 @@ class HeroSession:
             self._state_lock = asyncio.Lock()
         async with self._state_lock:
             state: dict[str, Any] = {}
-            if self._tokens:
+            if getattr(self, "_tokens", None):
                 state["tokens"] = self._tokens.as_dict()
-                state["identity"] = self._current_identity()
+            if getattr(self, "_identity", None):
+                state["identity"] = self._identity
             self._prune_dispense_journal()
             self._sync_legacy_fields()
             if self._dispense_journal:
@@ -256,13 +312,23 @@ class HeroSession:
             assert self.client
             return await operation(self.client)
 
-    async def async_save_dispense_id(self, identifier: str) -> None:
+    async def async_save_dispense_id(
+        self,
+        identifier: str,
+        *,
+        device_tz: tzinfo | None = None,
+        expires_at: float | None = None,
+    ) -> None:
         if not self._persist:
             return
-        self._get_journal()[identifier] = {
+        entry: dict[str, Any] = {
             "status": "completed",
             "recorded_at": time.time(),
         }
+        exp = expires_at or self._compute_expiry(identifier, device_tz=device_tz)
+        if exp is not None:
+            entry["expires_at"] = exp
+        self._get_journal()[identifier] = entry
         await self._async_save_state()
 
     async def async_last_dispense_id(self) -> str | None:
@@ -271,14 +337,26 @@ class HeroSession:
         self._sync_legacy_fields()
         return self._last_dispense_id
 
-    async def async_mark_dispense_start_sent(self, scheduled_datetime: str) -> None:
+    async def async_mark_dispense_start_sent(
+        self,
+        scheduled_datetime: str,
+        *,
+        device_tz: tzinfo | None = None,
+        expires_at: float | None = None,
+    ) -> None:
         """Persist ambiguity before waiting for the device completion event."""
         if not self._persist:
             return
-        self._get_journal()[scheduled_datetime] = {
+        entry: dict[str, Any] = {
             "status": "outcome_unknown",
             "recorded_at": time.time(),
         }
+        exp = expires_at or self._compute_expiry(
+            scheduled_datetime, device_tz=device_tz
+        )
+        if exp is not None:
+            entry["expires_at"] = exp
+        self._get_journal()[scheduled_datetime] = entry
         await self._async_save_state()
 
     async def async_dispense_outcome_unknown(self, scheduled_datetime: str) -> bool:

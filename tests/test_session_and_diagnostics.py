@@ -337,3 +337,230 @@ async def test_session_execute_reauth_fallback():
     result = await session.async_execute(op)
     assert result == "success"
     assert session._auth.login_calls >= 1
+
+
+@pytest.mark.asyncio
+async def test_session_journal_pruning_timezone_aware(monkeypatch):
+    """Timezone-aware timestamps expire exactly at scheduled instant + 6 hours."""
+    from datetime import UTC, datetime
+
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._store = FakeStore()
+    session._state_lock = asyncio.Lock()
+    session._dispense_journal = {}
+    session.device_tz = None
+
+    # Scheduled at 2026-09-14 12:00:00 UTC
+    sched_dt = datetime(2026, 9, 14, 12, 0, 0, tzinfo=UTC)
+    now_ts = sched_dt.timestamp()
+    monkeypatch.setattr(time, "time", lambda: now_ts)
+
+    sched_str = sched_dt.isoformat()
+    await session.async_save_dispense_id(sched_str)
+
+    entry = session.dispense_journal[sched_str]
+    assert "expires_at" in entry
+    expected_expiry = sched_dt.timestamp() + 21600.0  # +6h
+    assert entry["expires_at"] == pytest.approx(expected_expiry)
+
+    # 5 hours 59 minutes after scheduled instant: must NOT be pruned
+    monkeypatch.setattr(time, "time", lambda: expected_expiry - 60)
+    session._prune_dispense_journal()
+    assert sched_str in session.dispense_journal
+    blocked, reason = session.is_dispense_blocked(sched_str)
+    assert blocked is True
+    assert reason == "duplicate_recent_dose"
+
+    # 6 hours 1 second after scheduled instant: must be pruned
+    monkeypatch.setattr(time, "time", lambda: expected_expiry + 1)
+    session._prune_dispense_journal()
+    assert sched_str not in session.dispense_journal
+    blocked, reason = session.is_dispense_blocked(sched_str)
+    assert blocked is False
+
+
+@pytest.mark.asyncio
+async def test_session_journal_pruning_naive_with_us_eastern_timezone(monkeypatch):
+    """Naive Hero schedules use confirmed device_tz and never expire early."""
+    from datetime import UTC, datetime
+    from zoneinfo import ZoneInfo
+
+    eastern = ZoneInfo("America/New_York")
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._store = FakeStore()
+    session._state_lock = asyncio.Lock()
+    session._dispense_journal = {}
+    session.device_tz = eastern
+
+    # Naive Hero schedule: 19:15 local time (EDT, UTC-4)
+    # 19:15 EDT == 23:15 UTC.
+    sched_str = "2026-09-14T19:15:00"
+    true_scheduled_instant = datetime(2026, 9, 14, 19, 15, 0, tzinfo=eastern)
+    now_ts = true_scheduled_instant.timestamp()
+    monkeypatch.setattr(time, "time", lambda: now_ts)
+
+    await session.async_save_dispense_id(sched_str)
+
+    entry = session.dispense_journal[sched_str]
+    assert "expires_at" in entry
+
+    # Expected expiration: 23:15 UTC + 6 hours = 05:15 UTC next day
+    expected_expiry = true_scheduled_instant.timestamp() + 21600.0
+    assert entry["expires_at"] == pytest.approx(expected_expiry)
+
+    # If naive was mistakenly parsed as UTC, it would have expired at
+    # 19:15 UTC + 6h = 01:15 UTC next day.
+    # At 02:00 UTC (4h 45m after scheduled EDT time), it is STILL in the late window!
+    utc_test_time_at_0200 = datetime(2026, 9, 15, 2, 0, 0, tzinfo=UTC).timestamp()
+    monkeypatch.setattr(time, "time", lambda: utc_test_time_at_0200)
+    session._prune_dispense_journal()
+    assert sched_str in session.dispense_journal
+    blocked, reason = session.is_dispense_blocked(sched_str)
+    assert blocked is True
+    assert reason == "duplicate_recent_dose"
+
+    # At 05:14 UTC (5h 59m after scheduled time): still present
+    monkeypatch.setattr(time, "time", lambda: expected_expiry - 60)
+    session._prune_dispense_journal()
+    assert sched_str in session.dispense_journal
+
+    # At 05:16 UTC (6h 1m after scheduled time): pruned
+    monkeypatch.setattr(time, "time", lambda: expected_expiry + 60)
+    session._prune_dispense_journal()
+    assert sched_str not in session.dispense_journal
+
+
+@pytest.mark.asyncio
+async def test_session_journal_dst_transition_preserves_safety(monkeypatch):
+    """DST transitions in device timezone correctly anchor expiration instant."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    eastern = ZoneInfo("America/New_York")
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._store = FakeStore()
+    session._state_lock = asyncio.Lock()
+    session._dispense_journal = {}
+    session.device_tz = eastern
+
+    # Spring forward date in US: 2026-03-08
+    sched_dt = datetime(2026, 3, 8, 3, 30, 0, tzinfo=eastern)
+    now_ts = sched_dt.timestamp()
+    monkeypatch.setattr(time, "time", lambda: now_ts)
+
+    sched_str = "2026-03-08T03:30:00"
+    await session.async_mark_dispense_start_sent(sched_str)
+
+    entry = session.dispense_journal[sched_str]
+    assert entry["status"] == "outcome_unknown"
+    assert "expires_at" in entry
+
+    # Verify blocked status for outcome_unknown
+    blocked, reason = session.is_dispense_blocked(sched_str)
+    assert blocked is True
+    assert reason == "dispense_outcome_unknown"
+
+    # Within 6 hours of expiry
+    monkeypatch.setattr(time, "time", lambda: entry["expires_at"] - 10)
+    session._prune_dispense_journal()
+    assert sched_str in session.dispense_journal
+
+    # Past 6 hours of expiry
+    monkeypatch.setattr(time, "time", lambda: entry["expires_at"] + 10)
+    session._prune_dispense_journal()
+    assert sched_str not in session.dispense_journal
+
+
+@pytest.mark.asyncio
+async def test_legacy_journal_records_load_safely_and_backfill_expiry(monkeypatch):
+    """Legacy journal entries without expires_at load safely and compute expiry."""
+    from zoneinfo import ZoneInfo
+
+    eastern = ZoneInfo("America/New_York")
+    now_ts = 1789427700.0  # Approx 2026-09-14 23:15:00 UTC
+    monkeypatch.setattr(time, "time", lambda: now_ts)
+
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._email = "user@example.invalid"
+    session.account_id = "acc"
+    session._lock = asyncio.Lock()
+    session._state_lock = asyncio.Lock()
+    session._identity = {"email": "user@example.invalid", "account_id": "acc"}
+    session.device_tz = None
+    session._store = FakeStore(
+        {
+            "identity": {"email": "user@example.invalid", "account_id": "acc"},
+            "tokens": {
+                "access_token": "acc",
+                "refresh_token": "ref",
+                "expires_in": 3600,
+                "created_at": now_ts,
+            },
+            "dispense_journal": {
+                "2026-09-14T19:15:00": {
+                    "status": "completed",
+                    "recorded_at": now_ts,
+                },
+                "2026-09-14T20:00:00": {
+                    "status": "outcome_unknown",
+                    "recorded_at": now_ts,
+                    "expires_at": now_ts + 21600.0,
+                },
+            },
+        }
+    )
+    session._http = SimpleNamespace()
+    session._auth = SimpleNamespace()
+    session._dispense_journal = {}
+
+    await session.async_initialize()
+
+    # Legacy record without expires_at loads without error
+    assert "2026-09-14T19:15:00" in session.dispense_journal
+    # Existing record with expires_at preserves its value
+    expected_val = now_ts + 21600.0
+    assert session.dispense_journal["2026-09-14T20:00:00"]["expires_at"] == expected_val
+
+    # Setting device_tz backfills missing expires_at using eastern timezone
+    session.device_tz = eastern
+    assert "expires_at" in session.dispense_journal["2026-09-14T19:15:00"]
+    assert session.dispense_journal["2026-09-14T19:15:00"]["expires_at"] > now_ts
+
+
+@pytest.mark.asyncio
+async def test_malformed_timestamp_journal_fails_conservative(monkeypatch):
+    """Malformed timestamps fail conservative: never pruned early, kept for 48h."""
+    now_ts = 1000000.0
+    monkeypatch.setattr(time, "time", lambda: now_ts)
+
+    session = object.__new__(HeroSession)
+    session._persist = True
+    session._store = FakeStore()
+    session._state_lock = asyncio.Lock()
+    session._dispense_journal = {}
+    session.device_tz = None
+
+    bad_key = "invalid-schedule-string"
+    await session.async_save_dispense_id(bad_key)
+
+    # 1 hour later: must NOT be pruned
+    monkeypatch.setattr(time, "time", lambda: now_ts + 3600)
+    session._prune_dispense_journal()
+    assert bad_key in session.dispense_journal
+    blocked, reason = session.is_dispense_blocked(bad_key)
+    assert blocked is True
+    assert reason == "duplicate_recent_dose"
+
+    # 24 hours later: must NOT be pruned (conservative 48h retention)
+    monkeypatch.setattr(time, "time", lambda: now_ts + 86400)
+    session._prune_dispense_journal()
+    assert bad_key in session.dispense_journal
+
+    # 49 hours later: pruned safely
+    monkeypatch.setattr(time, "time", lambda: now_ts + 172801)
+    session._prune_dispense_journal()
+    assert bad_key not in session.dispense_journal
