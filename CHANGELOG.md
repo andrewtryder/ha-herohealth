@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.1...v0.5.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* close dispense authorization and timezone safety gaps ([#20](https://github.com/andrewtryder/ha-herohealth/issues/20)) ([af038c5](https://github.com/andrewtryder/ha-herohealth/commit/af038c53dc8dfd31ad795dd4c6297986d2e97b15))
+
 ## [0.5.1](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.0...v0.5.1) (2026-09-14)
 
 
