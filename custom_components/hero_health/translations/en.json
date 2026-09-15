@@ -156,6 +156,9 @@
     },
     "dispense_outcome_unknown": {
       "message": "Hero may have started this dose but did not confirm completion. Verify the dispenser state before trying again."
+    },
+    "admin_required": {
+      "message": "Administrator privileges are required to dispense medication remotely."
     }
   }
 }

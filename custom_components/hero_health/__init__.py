@@ -11,6 +11,7 @@ from homeassistant.exceptions import (
     ConfigEntryNotReady,
     HomeAssistantError,
     ServiceValidationError,
+    Unauthorized,
 )
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
@@ -35,6 +36,45 @@ from .session import HeroSession
 
 type HeroHealthConfigEntry = ConfigEntry[HeroHealthRuntimeData]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+class HeroAdminRequired(Unauthorized):
+    """Raised when remote dispensing is attempted without administrator privileges."""
+
+    def __init__(
+        self,
+        message: str = (
+            "Administrator privileges are required to dispense medication remotely"
+        ),
+        *,
+        context: Context | None = None,
+    ) -> None:
+        super().__init__(context=context)
+        self.args = (message,)
+        self.translation_domain = DOMAIN
+        self.translation_key = "admin_required"
+
+
+async def _async_enforce_admin_authorization(
+    hass: HomeAssistant, context: Context | None
+) -> None:
+    if context is None or not getattr(context, "user_id", None):
+        raise HeroAdminRequired(
+            "An authenticated administrator context is required to dispense "
+            "medication remotely",
+            context=context,
+        )
+    if not hasattr(hass, "auth") or hass.auth is None:
+        raise HeroAdminRequired(
+            "Authentication manager is not available",
+            context=context,
+        )
+    user = await hass.auth.async_get_user(context.user_id)
+    if user is None or not user.is_admin:
+        raise HeroAdminRequired(
+            "Administrator privileges are required to dispense medication remotely",
+            context=context,
+        )
 
 
 async def async_setup(hass: HomeAssistant, _config: dict) -> bool:
@@ -80,6 +120,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HeroHealthConfigEntry) -
         await session.async_initialize()
         coordinator = HeroCoordinator(hass, entry, session)
         await coordinator.async_config_entry_first_refresh()
+        if coordinator.device_tz is not None:
+            session.device_tz = coordinator.device_tz
     except HeroAuthenticationError as err:
         await session.async_close()
         raise ConfigEntryAuthFailed("Hero authentication failed") from err
@@ -113,6 +155,7 @@ async def async_dispense_dose(
     scheduled_datetime: str | None = None,
     context: Context | None = None,
 ) -> None:
+    await _async_enforce_admin_authorization(hass, context)
     coordinator = _coordinator_for_entry_id(hass, entry_id)
     async with coordinator.dispense_lock:
         # This action must never rely on a debounced refresh or stale snapshot.
@@ -125,8 +168,10 @@ async def async_dispense_dose(
                 translation_key="dose_state_unavailable",
             )
         session = getattr(coordinator, "session", None)
-        journal = getattr(session, "dispense_journal", None) if session else None
         device_tz = getattr(coordinator, "device_tz", None)
+        if session and device_tz and session.device_tz is None:
+            session.device_tz = device_tz
+        journal = getattr(session, "dispense_journal", None) if session else None
         evaluation = evaluate_dispense_eligibility(
             coordinator.data.get("doses"),
             dt_util.now(),

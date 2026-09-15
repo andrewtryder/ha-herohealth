@@ -153,6 +153,9 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 except Exception:
                     self.device_tz = None
 
+            if hasattr(self.session, "device_tz"):
+                self.session.device_tz = self.device_tz
+
             # Normalize stats payload: fallback safely if malformed
             clean_stats = (
                 stats if isinstance(stats, dict) else (self.data or {}).get("stats", {})

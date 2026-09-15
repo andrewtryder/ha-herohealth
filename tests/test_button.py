@@ -64,6 +64,10 @@ async def test_dispense_button_delegates_to_guarded_service(monkeypatch):
     coordinator.data["doses"] = _eligible_doses(now)
     services = SimpleNamespace(async_call=AsyncMock())
     button.hass = SimpleNamespace(services=services)
+    from homeassistant.core import Context
+
+    admin_context = Context(user_id="admin")
+    button._context = admin_context
 
     await button.async_press()
 
@@ -72,6 +76,7 @@ async def test_dispense_button_delegates_to_guarded_service(monkeypatch):
         SERVICE_DISPENSE,
         {"config_entry_id": "entry-1"},
         blocking=True,
+        context=admin_context,
     )
 
 

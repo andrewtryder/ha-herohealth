@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from homeassistant.core import Context
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
@@ -336,8 +337,17 @@ async def test_dispense_service_registry_awaits_registered_handler(hass, monkeyp
         }
     }
 
+    from homeassistant.auth.const import GROUP_ID_ADMIN
+    from homeassistant.core import Context
+
+    admin = await hass.auth.async_create_user("Admin User", group_ids=[GROUP_ID_ADMIN])
+    admin_context = Context(user_id=admin.id)
     await hass.services.async_call(
-        DOMAIN, SERVICE_DISPENSE, {"config_entry_id": entry.entry_id}, blocking=True
+        DOMAIN,
+        SERVICE_DISPENSE,
+        {"config_entry_id": entry.entry_id},
+        blocking=True,
+        context=admin_context,
     )
 
     coordinator.async_refresh.assert_awaited_once()
@@ -351,6 +361,11 @@ async def test_invalid_dispense_service_registry_surfaces_validation_error(
     hass, monkeypatch
 ):
     entry = await _setup_registry_entry(hass, monkeypatch)
+    from homeassistant.auth.const import GROUP_ID_ADMIN
+    from homeassistant.core import Context
+
+    admin = await hass.auth.async_create_user("Admin User", group_ids=[GROUP_ID_ADMIN])
+    admin_context = Context(user_id=admin.id)
 
     with pytest.raises(ServiceValidationError, match="No eligible Hero scheduled dose"):
         await hass.services.async_call(
@@ -358,6 +373,7 @@ async def test_invalid_dispense_service_registry_surfaces_validation_error(
             SERVICE_DISPENSE,
             {"config_entry_id": entry.entry_id},
             blocking=True,
+            context=admin_context,
         )
 
     assert entry.runtime_data.coordinator.async_refresh.await_count == 1
@@ -441,8 +457,14 @@ async def test_action_targeting_and_dispense_safety():
         }
     }
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
-    hass = SimpleNamespace(config_entries=FakeEntries([entry]))
-    call = SimpleNamespace(data={"config_entry_id": "entry"})
+    admin_user = SimpleNamespace(id="admin", is_admin=True)
+    hass = SimpleNamespace(
+        config_entries=FakeEntries([entry]),
+        auth=SimpleNamespace(async_get_user=AsyncMock(return_value=admin_user)),
+    )
+    call = SimpleNamespace(
+        data={"config_entry_id": "entry"}, context=Context(user_id="admin")
+    )
     assert _coordinator_for_call(hass, call) is coordinator
     await _async_refresh(hass, call)
     with pytest.raises(ServiceValidationError):
@@ -482,11 +504,18 @@ async def test_dispense_action_executes_one_eligible_dose_and_deduplicates():
         }
     }
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
-    hass = SimpleNamespace(config_entries=FakeEntries([entry]))
-    await _async_dispense(hass, SimpleNamespace(data={"config_entry_id": "entry"}))
+    admin_user = SimpleNamespace(id="admin", is_admin=True)
+    hass = SimpleNamespace(
+        config_entries=FakeEntries([entry]),
+        auth=SimpleNamespace(async_get_user=AsyncMock(return_value=admin_user)),
+    )
+    call = SimpleNamespace(
+        data={"config_entry_id": "entry"}, context=Context(user_id="admin")
+    )
+    await _async_dispense(hass, call)
     assert session.last == dose
     with pytest.raises(ServiceValidationError, match="already dispensed"):
-        await _async_dispense(hass, SimpleNamespace(data={"config_entry_id": "entry"}))
+        await _async_dispense(hass, call)
 
 
 @pytest.mark.asyncio
@@ -517,10 +546,17 @@ async def test_dispense_aborts_when_immediate_refresh_fails():
 
     coordinator.async_refresh = failing_refresh
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
-    hass = SimpleNamespace(config_entries=FakeEntries([entry]))
+    admin_user = SimpleNamespace(id="admin", is_admin=True)
+    hass = SimpleNamespace(
+        config_entries=FakeEntries([entry]),
+        auth=SimpleNamespace(async_get_user=AsyncMock(return_value=admin_user)),
+    )
+    call = SimpleNamespace(
+        data={"config_entry_id": "entry"}, context=Context(user_id="admin")
+    )
 
     with pytest.raises(HomeAssistantError) as exc_info:
-        await _async_dispense(hass, SimpleNamespace(data={"config_entry_id": "entry"}))
+        await _async_dispense(hass, call)
 
     assert exc_info.value.translation_key == "dose_state_unavailable"
     assert session.executed.await_count == 0
@@ -559,10 +595,17 @@ async def test_dispense_translates_safety_failures(error):
         }
     }
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
-    hass = SimpleNamespace(config_entries=FakeEntries([entry]))
+    admin_user = SimpleNamespace(id="admin", is_admin=True)
+    hass = SimpleNamespace(
+        config_entries=FakeEntries([entry]),
+        auth=SimpleNamespace(async_get_user=AsyncMock(return_value=admin_user)),
+    )
+    call = SimpleNamespace(
+        data={"config_entry_id": "entry"}, context=Context(user_id="admin")
+    )
 
     with pytest.raises(HomeAssistantError):
-        await _async_dispense(hass, SimpleNamespace(data={"config_entry_id": "entry"}))
+        await _async_dispense(hass, call)
 
 
 @pytest.mark.asyncio
@@ -1171,9 +1214,13 @@ async def test_dispense_dose_ignores_refresh_failure_after_success():
 
     coordinator.async_request_refresh = failing_request_refresh
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
-    hass = SimpleNamespace(config_entries=FakeEntries([entry]))
+    admin_user = SimpleNamespace(id="admin", is_admin=True)
+    hass = SimpleNamespace(
+        config_entries=FakeEntries([entry]),
+        auth=SimpleNamespace(async_get_user=AsyncMock(return_value=admin_user)),
+    )
 
-    await async_dispense_dose(hass, "entry")
+    await async_dispense_dose(hass, "entry", context=Context(user_id="admin"))
     assert session.last == dose
 
 
