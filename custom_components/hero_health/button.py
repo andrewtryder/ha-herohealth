@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.button import ButtonEntity
@@ -17,6 +19,8 @@ from .entity import HeroEntity
 if TYPE_CHECKING:
     from . import HeroHealthConfigEntry
     from .coordinator import HeroCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -41,11 +45,14 @@ class DispenseScheduledDoseButton(HeroEntity, ButtonEntity):
     def __init__(self, coordinator: HeroCoordinator) -> None:
         super().__init__(coordinator, "dispense_scheduled_dose")
         self._timer_unsubs: list[CALLBACK_TYPE] = []
+        self._scheduled_refresh_at: datetime | None = None
 
     @property
     def _evaluation(self) -> DispenseEligibility:
         session = getattr(self.coordinator, "session", None)
-        journal = session.dispense_journal if session is not None else None
+        journal = (
+            getattr(session, "dispense_journal", None) if session is not None else None
+        )
         device_tz = getattr(self.coordinator, "device_tz", None)
         return evaluate_dispense_eligibility(
             (self.coordinator.data or {}).get("doses"),
@@ -74,6 +81,7 @@ class DispenseScheduledDoseButton(HeroEntity, ButtonEntity):
         for unsub in self._timer_unsubs:
             unsub()
         self._timer_unsubs.clear()
+        self._scheduled_refresh_at = None
 
         if not self.hass:
             return
@@ -89,30 +97,42 @@ class DispenseScheduledDoseButton(HeroEntity, ButtonEntity):
                     )
                 )
         if evaluation.scheduled_at and evaluation.scheduled_at > now:
+            self._scheduled_refresh_at = evaluation.scheduled_at
+            delay_seconds = (evaluation.scheduled_at - now).total_seconds()
+            _LOGGER.debug(
+                "Arming scheduled-dose eligibility refresh timer; "
+                "delay_seconds=%.1f eligible=%s reason=%s",
+                delay_seconds,
+                evaluation.eligible,
+                evaluation.reason,
+            )
             self._timer_unsubs.append(
                 async_track_point_in_time(
                     self.hass,
-                    lambda now: self._async_scheduled_time_fired(
-                        now, evaluation.scheduled_at
-                    ),
+                    self._async_scheduled_time_fired,
                     evaluation.scheduled_at,
                 )
             )
 
     @callback
-    def _async_boundary_fired(self, _now: Any) -> None:
+    def _async_boundary_fired(self, _now: datetime) -> None:
         """Update HA state and rearm boundary timers."""
         self._schedule_boundary_timers()
         self.async_write_ha_state()
 
     @callback
-    def _async_scheduled_time_fired(self, now: Any, scheduled_at: Any) -> None:
+    def _async_scheduled_time_fired(self, now: datetime) -> None:
         """Fetch Hero's authoritative dose state at the scheduled dose time."""
-        schedule_refresh = getattr(
-            self.coordinator, "async_schedule_eligibility_refresh", None
+        _LOGGER.debug(
+            "Scheduled-dose timer fired; requesting authoritative Hero refresh"
         )
-        if callable(schedule_refresh):
-            schedule_refresh(scheduled_at)
+        scheduled_at = self._scheduled_refresh_at
+        if scheduled_at is not None:
+            schedule_refresh = getattr(
+                self.coordinator, "async_schedule_eligibility_refresh", None
+            )
+            if callable(schedule_refresh):
+                schedule_refresh(scheduled_at)
         self._async_boundary_fired(now)
 
     async def async_added_to_hass(self) -> None:
@@ -125,6 +145,7 @@ class DispenseScheduledDoseButton(HeroEntity, ButtonEntity):
         for unsub in self._timer_unsubs:
             unsub()
         self._timer_unsubs.clear()
+        self._scheduled_refresh_at = None
         await super().async_will_remove_from_hass()
 
     @callback

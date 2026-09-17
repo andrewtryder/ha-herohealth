@@ -1,14 +1,18 @@
 """Safety-gated dispense button behavior."""
 
+import logging
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from homeassistant.core import HassJob, HassJobType, is_callback
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.hero_health.button import DispenseScheduledDoseButton
 from custom_components.hero_health.const import DOMAIN, SERVICE_DISPENSE
+from custom_components.hero_health.coordinator import HeroCoordinator
 
 
 class FakeCoordinator:
@@ -159,11 +163,116 @@ async def test_button_scheduled_time_refreshes_authoritative_dose_state(monkeypa
     scheduled_callback = next(
         callback for callback, target in timers if target == scheduled
     )
+    assert is_callback(scheduled_callback)
+    assert HassJob(scheduled_callback).job_type == HassJobType.Callback
+    assert getattr(scheduled_callback, "__name__", "") != "<lambda>"
+
     scheduled_callback(scheduled)
     assert coordinator.eligibility_refreshes == 1
 
     coordinator.data["doses"] = _eligible_doses(scheduled)
     assert button.available
+
+
+@pytest.mark.asyncio
+async def test_button_scheduled_time_ha_event_loop_execution(hass, monkeypatch):
+    """Regression test: scheduled timer fires via real Home Assistant event loop."""
+    now = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+    monkeypatch.setattr(dt_util, "now", lambda: now)
+    scheduled = now + timedelta(minutes=15)
+
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
+    coordinator._async_unsub_refresh()
+    coordinator._update_interval_seconds = None
+    coordinator.async_request_refresh = AsyncMock()
+    coordinator.data = {
+        "doses": {
+            "dates": [
+                {
+                    "times": [
+                        {
+                            "scheduled_datetime": scheduled.isoformat(),
+                            "doses": [{"state": "not_time_to_take"}],
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    button = DispenseScheduledDoseButton(coordinator)
+    button.hass = hass
+    button.platform = SimpleNamespace(platform_name="hero_health", domain="button")
+    button.entity_id = "button.hero_dispense_scheduled_dose"
+    await button.async_added_to_hass()
+
+    assert not button.available
+    assert button._scheduled_refresh_at == scheduled
+    assert len(button._timer_unsubs) > 0
+
+    # Advance time through Home Assistant point_in_time tracking machinery
+    async_fire_time_changed(hass, scheduled + timedelta(seconds=1))
+    await hass.async_block_till_done()
+
+    # Verify coordinator refresh was requested without thread-safety RuntimeError
+    coordinator.async_request_refresh.assert_awaited_once()
+
+    # Clean up and ensure unsubs and armed boundary are cleared
+    await button.async_will_remove_from_hass()
+    await coordinator.async_shutdown()
+    assert len(button._timer_unsubs) == 0
+    assert button._scheduled_refresh_at is None
+
+
+@pytest.mark.asyncio
+async def test_button_schedule_timers_without_hass():
+    """Verify scheduling timers without hass attached safely no-ops."""
+    coordinator = FakeCoordinator()
+    button = DispenseScheduledDoseButton(coordinator)
+    button.hass = None
+    button._schedule_boundary_timers()
+    assert len(button._timer_unsubs) == 0
+    assert button._scheduled_refresh_at is None
+
+
+@pytest.mark.asyncio
+async def test_button_scheduled_time_logs_sanitized(hass, caplog, monkeypatch):
+    """Verify scheduled timer logs useful debug messages without sensitive data."""
+    coordinator = FakeCoordinator()
+    button = DispenseScheduledDoseButton(coordinator)
+    now = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+    monkeypatch.setattr(dt_util, "now", lambda: now)
+    scheduled = now + timedelta(minutes=15)
+    coordinator.data["doses"] = {
+        "dates": [
+            {
+                "times": [
+                    {
+                        "scheduled_datetime": scheduled.isoformat(),
+                        "doses": [{"state": "not_time_to_take"}],
+                    }
+                ]
+            }
+        ]
+    }
+    button.hass = hass
+    button.platform = SimpleNamespace(platform_name="hero_health", domain="button")
+    button.entity_id = "button.hero_dispense_scheduled_dose"
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.hero_health.button"):
+        await button.async_added_to_hass()
+        assert "Arming scheduled-dose eligibility refresh timer" in caplog.text
+        button._async_scheduled_time_fired(scheduled)
+        assert (
+            "Scheduled-dose timer fired; requesting authoritative Hero refresh"
+            in caplog.text
+        )
+
+    await button.async_will_remove_from_hass()
+
+    # Sensitive data exclusion verification
+    assert "account-1" not in caplog.text
 
 
 @pytest.mark.asyncio

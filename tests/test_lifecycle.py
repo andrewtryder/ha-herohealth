@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from homeassistant.core import Context
+from homeassistant.core import Context, is_callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
@@ -783,17 +783,155 @@ async def test_coordinator_update_data_error_handling(hass):
 
 
 @pytest.mark.asyncio
-async def test_scheduled_eligibility_refresh_is_deduplicated(hass):
+async def test_scheduled_eligibility_refresh_is_deduplicated(hass, caplog):
+    import logging
+
     entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
     coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
+    assert is_callback(coordinator.async_schedule_eligibility_refresh)
+
+    event_a = asyncio.Event()
+    refresh_count = 0
+
+    async def blocking_refresh():
+        nonlocal refresh_count
+        refresh_count += 1
+        if refresh_count == 1:
+            await event_a.wait()
+
+    coordinator.async_request_refresh = AsyncMock(side_effect=blocking_refresh)
+    boundary_a = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+    boundary_b = datetime(2026, 9, 11, 13, 0, tzinfo=dt_util.UTC)
+
+    with caplog.at_level(
+        logging.DEBUG, logger="custom_components.hero_health.coordinator"
+    ):
+        # 1. Start boundary A refresh and deliberately block it with an asyncio.Event
+        coordinator.async_schedule_eligibility_refresh(boundary_a)
+        assert coordinator._last_eligibility_refresh_boundary == boundary_a
+        assert coordinator._pending_eligibility_refresh_boundary is None
+
+        # Duplicate call for same boundary A is deduplicated
+        coordinator.async_schedule_eligibility_refresh(boundary_a)
+        assert (
+            "Scheduled-dose eligibility refresh already handled for this boundary"
+            in caplog.text
+        )
+
+        # 2. Call async_schedule_eligibility_refresh(boundary_B)
+        # while A is still running
+        coordinator.async_schedule_eligibility_refresh(boundary_b)
+
+        # 3. Verify B is retained as pending
+        assert coordinator._pending_eligibility_refresh_boundary == boundary_b
+        assert (
+            "Scheduled-dose eligibility refresh queued behind active refresh"
+            in caplog.text
+        )
+
+        # Duplicate B request while pending does not queue extra refreshes
+        coordinator.async_schedule_eligibility_refresh(boundary_b)
+        assert coordinator._pending_eligibility_refresh_boundary == boundary_b
+
+        # 4. Release A
+        event_a.set()
+        await hass.async_block_till_done()
+
+        # 5. Verify a second authoritative refresh occurs for B
+        # 6. Verify the total refresh count is exactly 2
+        assert coordinator.async_request_refresh.await_count == 2
+        assert coordinator._last_eligibility_refresh_boundary == boundary_b
+        assert coordinator._pending_eligibility_refresh_boundary is None
+
+        # 7. Verify duplicate B requests do not cause a third refresh
+        coordinator.async_schedule_eligibility_refresh(boundary_b)
+        await hass.async_block_till_done()
+        assert coordinator.async_request_refresh.await_count == 2
+
+        assert (
+            "Scheduled-dose authoritative Hero refresh completed successfully"
+            in caplog.text
+        )
+
+    # Verify no sensitive data or timestamp logged
+    assert "hero-1" not in caplog.text
+    assert "entry-1" not in caplog.text
+    assert "2026-09-11" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_scheduled_eligibility_refresh_coalesces_newest_pending_boundary(hass):
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
+
+    event_a = asyncio.Event()
+    refresh_count = 0
+
+    async def blocking_refresh():
+        nonlocal refresh_count
+        refresh_count += 1
+        if refresh_count == 1:
+            await event_a.wait()
+
+    coordinator.async_request_refresh = AsyncMock(side_effect=blocking_refresh)
+    boundary_a = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+    boundary_b = datetime(2026, 9, 11, 13, 0, tzinfo=dt_util.UTC)
+    boundary_c = datetime(2026, 9, 11, 14, 0, tzinfo=dt_util.UTC)
+
+    # Start A
+    coordinator.async_schedule_eligibility_refresh(boundary_a)
+    # Queue B then C while A is running
+    coordinator.async_schedule_eligibility_refresh(boundary_b)
+    coordinator.async_schedule_eligibility_refresh(boundary_c)
+    assert coordinator._pending_eligibility_refresh_boundary == boundary_c
+
+    # Complete A, which should immediately process newest pending C
+    event_a.set()
+    await hass.async_block_till_done()
+
+    assert coordinator.async_request_refresh.await_count == 2
+    assert coordinator._last_eligibility_refresh_boundary == boundary_c
+    assert coordinator._pending_eligibility_refresh_boundary is None
+
+
+@pytest.mark.asyncio
+async def test_scheduled_eligibility_refresh_logs_update_failure(hass, caplog):
+    import logging
+
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
+    coordinator.last_update_success = False
     coordinator.async_request_refresh = AsyncMock()
     boundary = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
 
-    coordinator.async_schedule_eligibility_refresh(boundary)
-    coordinator.async_schedule_eligibility_refresh(boundary)
-    await hass.async_block_till_done()
+    with caplog.at_level(
+        logging.DEBUG, logger="custom_components.hero_health.coordinator"
+    ):
+        coordinator.async_schedule_eligibility_refresh(boundary)
+        await hass.async_block_till_done()
+        assert (
+            "Scheduled-dose authoritative Hero refresh completed with update failure"
+            in caplog.text
+        )
 
-    coordinator.async_request_refresh.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_scheduled_eligibility_refresh_logs_exception(hass, caplog):
+    import logging
+
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
+    coordinator.async_request_refresh = AsyncMock(
+        side_effect=RuntimeError("refresh explosion")
+    )
+    boundary = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+
+    with caplog.at_level(
+        logging.DEBUG, logger="custom_components.hero_health.coordinator"
+    ):
+        coordinator.async_schedule_eligibility_refresh(boundary)
+        await hass.async_block_till_done()
+        assert "Scheduled-dose authoritative Hero refresh failed" in caplog.text
 
 
 @pytest.mark.asyncio
