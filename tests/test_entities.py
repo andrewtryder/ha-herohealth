@@ -1,16 +1,23 @@
 """Entity values, stable physical-slot identity, and schedule ordering."""
 
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.const import UnitOfRatio
+from homeassistant.core import HassJob, HassJobType, is_callback
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.hero_health.binary_sensor import (
     ConnectivitySensor,
+    DispenseAvailableSensor,
     SlotLowSensor,
 )
+from custom_components.hero_health.button import DispenseScheduledDoseButton
+from custom_components.hero_health.coordinator import HeroCoordinator
 from custom_components.hero_health.entity import HeroEntity
 from custom_components.hero_health.sensor import (
     AdherenceSensor,
@@ -40,9 +47,14 @@ class FakeCoordinator:
                 ]
             },
         }
+        self.last_update_success = True
+        self.eligibility_refreshes = 0
 
     def async_add_listener(self, _listener, *_args):
         return lambda: None
+
+    def async_schedule_eligibility_refresh(self, _boundary):
+        self.eligibility_refreshes += 1
 
     async def async_request_refresh(self):
         self.refreshed = True
@@ -368,9 +380,198 @@ async def test_dispense_available_sensor_boundary_timers(monkeypatch):
     await sensor.async_added_to_hass()
     assert len(scheduled_timers) > 0
 
+    scheduled = now + timedelta(minutes=15)
+    scheduled_callback = next(
+        cb for cb, target in scheduled_timers if target == scheduled
+    )
+    assert is_callback(scheduled_callback)
+    assert HassJob(scheduled_callback).job_type == HassJobType.Callback
+    assert getattr(scheduled_callback, "__name__", "") != "<lambda>"
+
+    scheduled_callback(scheduled)
+    assert coordinator.eligibility_refreshes == 1
+
     sensor._async_boundary_fired(now)
-    assert len(written) == 1
+    assert len(written) == 2
 
     sensor._handle_coordinator_update()
     await sensor.async_will_remove_from_hass()
+    assert len(sensor._timer_unsubs) == 0
+    assert sensor._scheduled_refresh_at is None
+
+
+@pytest.mark.asyncio
+async def test_dispense_available_sensor_ha_event_loop_execution(hass, monkeypatch):
+    """Regression test: scheduled timer fires via real Home Assistant event loop."""
+    now = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+    monkeypatch.setattr(dt_util, "now", lambda: now)
+    scheduled = now + timedelta(minutes=15)
+
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    session = SimpleNamespace(dispense_journal={}, device_tz=None)
+    coordinator = HeroCoordinator(hass, entry, session)
+    coordinator._async_unsub_refresh()
+    coordinator._update_interval_seconds = None
+    coordinator.async_request_refresh = AsyncMock()
+    coordinator.data = {
+        "doses": {
+            "dates": [
+                {
+                    "times": [
+                        {
+                            "scheduled_datetime": scheduled.isoformat(),
+                            "doses": [{"state": "not_time_to_take"}],
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    sensor = DispenseAvailableSensor(coordinator)
+    sensor.hass = hass
+    sensor.platform = SimpleNamespace(
+        platform_name="hero_health", domain="binary_sensor"
+    )
+    sensor.entity_id = "binary_sensor.hero_dispense_available"
+    await sensor.async_added_to_hass()
+
+    assert not sensor.is_on
+    assert sensor._scheduled_refresh_at == scheduled
+    assert len(sensor._timer_unsubs) > 0
+
+    # Advance time through Home Assistant point_in_time tracking machinery
+    async_fire_time_changed(hass, scheduled + timedelta(seconds=1))
+    await hass.async_block_till_done()
+
+    # Verify coordinator refresh was requested without thread-safety RuntimeError
+    coordinator.async_request_refresh.assert_awaited_once()
+
+    # Clean up and ensure unsubs and armed boundary are cleared
+    await sensor.async_will_remove_from_hass()
+    await coordinator.async_shutdown()
+    assert len(sensor._timer_unsubs) == 0
+    assert sensor._scheduled_refresh_at is None
+
+
+@pytest.mark.asyncio
+async def test_dispense_available_sensor_schedule_timers_without_hass():
+    """Verify scheduling timers without hass attached safely no-ops."""
+    coordinator = FakeCoordinator()
+    sensor = DispenseAvailableSensor(coordinator)
+    sensor.hass = None
+    sensor._schedule_boundary_timers()
+    assert len(sensor._timer_unsubs) == 0
+    assert sensor._scheduled_refresh_at is None
+
+
+@pytest.mark.asyncio
+async def test_dispense_available_sensor_scheduled_time_logs_sanitized(
+    hass, caplog, monkeypatch
+):
+    """Verify scheduled timer logs useful debug messages without sensitive data."""
+    coordinator = FakeCoordinator()
+    sensor = DispenseAvailableSensor(coordinator)
+    now = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+    monkeypatch.setattr(dt_util, "now", lambda: now)
+    scheduled = now + timedelta(minutes=15)
+    coordinator.data["doses"] = {
+        "dates": [
+            {
+                "times": [
+                    {
+                        "scheduled_datetime": scheduled.isoformat(),
+                        "doses": [{"state": "not_time_to_take"}],
+                    }
+                ]
+            }
+        ]
+    }
+    sensor.hass = hass
+    sensor.platform = SimpleNamespace(
+        platform_name="hero_health", domain="binary_sensor"
+    )
+    sensor.entity_id = "binary_sensor.hero_dispense_available"
+
+    with caplog.at_level(
+        logging.DEBUG, logger="custom_components.hero_health.binary_sensor"
+    ):
+        await sensor.async_added_to_hass()
+        assert "Arming scheduled-dose eligibility refresh timer" in caplog.text
+        sensor._async_scheduled_time_fired(scheduled)
+        assert (
+            "Scheduled-dose timer fired; requesting authoritative Hero refresh"
+            in caplog.text
+        )
+
+    await sensor.async_will_remove_from_hass()
+
+    # Sensitive data exclusion verification
+    assert "fake-account" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_button_and_binary_sensor_joint_scheduled_time_refresh_and_deduplication(
+    hass, monkeypatch
+):
+    """Button and binary sensor fire at scheduled boundary with deduplicated refresh."""
+    now = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
+    monkeypatch.setattr(dt_util, "now", lambda: now)
+    scheduled = now + timedelta(minutes=15)
+
+    entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
+    session = SimpleNamespace(dispense_journal={}, device_tz=None)
+    coordinator = HeroCoordinator(hass, entry, session)
+    coordinator._async_unsub_refresh()
+    coordinator._update_interval_seconds = None
+    coordinator.async_request_refresh = AsyncMock()
+    coordinator.data = {
+        "offline": {"hero_offline": False},
+        "status": {},
+        "config": {"config": {"pills": []}},
+        "medications": [],
+        "doses": {
+            "dates": [
+                {
+                    "times": [
+                        {
+                            "scheduled_datetime": scheduled.isoformat(),
+                            "doses": [{"state": "not_time_to_take"}],
+                        }
+                    ]
+                }
+            ]
+        },
+    }
+
+    button = DispenseScheduledDoseButton(coordinator)
+    button.hass = hass
+    button.platform = SimpleNamespace(platform_name="hero_health", domain="button")
+    button.entity_id = "button.hero_dispense_scheduled_dose"
+
+    sensor = DispenseAvailableSensor(coordinator)
+    sensor.hass = hass
+    sensor.platform = SimpleNamespace(
+        platform_name="hero_health", domain="binary_sensor"
+    )
+    sensor.entity_id = "binary_sensor.hero_dispense_available"
+
+    await button.async_added_to_hass()
+    await sensor.async_added_to_hass()
+
+    assert not button.available
+    assert not sensor.is_on
+
+    # Advance time past scheduled boundary via real HA time tracking machinery
+    async_fire_time_changed(hass, scheduled + timedelta(seconds=1))
+    await hass.async_block_till_done()
+
+    # Exactly one refresh should have been requested due to coordinator deduplication
+    coordinator.async_request_refresh.assert_awaited_once()
+
+    # Clean up both entities
+    await button.async_will_remove_from_hass()
+    await sensor.async_will_remove_from_hass()
+    await coordinator.async_shutdown()
+    assert len(button._timer_unsubs) == 0
     assert len(sensor._timer_unsubs) == 0

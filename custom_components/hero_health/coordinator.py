@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -21,6 +22,8 @@ from .session import HeroSession
 if TYPE_CHECKING:
     from . import HeroHealthConfigEntry
 
+_LOGGER = logging.getLogger(__name__)
+
 
 class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(
@@ -31,7 +34,7 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     ) -> None:
         super().__init__(
             hass,
-            __import__("logging").getLogger(__name__),
+            _LOGGER,
             name="Hero Health",
             update_interval=timedelta(
                 minutes=getattr(entry, "options", {}).get(
@@ -43,18 +46,74 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.device_tz: tzinfo | None = None
         self._eligibility_refresh_task: asyncio.Task[None] | None = None
         self._last_eligibility_refresh_boundary: datetime | None = None
+        self._pending_eligibility_refresh_boundary: datetime | None = None
 
+    @callback
     def async_schedule_eligibility_refresh(self, boundary: datetime) -> None:
         """Refresh once when a scheduled-dose eligibility boundary is reached."""
-        if boundary == self._last_eligibility_refresh_boundary:
+        if (
+            boundary == self._last_eligibility_refresh_boundary
+            or boundary == self._pending_eligibility_refresh_boundary
+        ):
+            _LOGGER.debug(
+                "Scheduled-dose eligibility refresh already handled for this boundary"
+            )
             return
-        self._last_eligibility_refresh_boundary = boundary
+
         task = self._eligibility_refresh_task
         if task is not None and not task.done():
+            self._pending_eligibility_refresh_boundary = boundary
+            _LOGGER.debug(
+                "Scheduled-dose eligibility refresh queued behind active refresh"
+            )
             return
-        self._eligibility_refresh_task = self.hass.async_create_task(
-            self.async_request_refresh()
+
+        self._last_eligibility_refresh_boundary = boundary
+        self._pending_eligibility_refresh_boundary = None
+        _LOGGER.debug(
+            "Scheduled-dose timer fired; requesting authoritative Hero refresh"
         )
+        self._eligibility_refresh_task = self.hass.async_create_task(
+            self._async_execute_eligibility_refresh()
+        )
+
+    async def _async_execute_eligibility_refresh(self) -> None:
+        """Execute authoritative coordinator refresh for scheduled-dose boundaries."""
+        try:
+            while True:
+                try:
+                    await self.async_request_refresh()
+                    if self.last_update_success:
+                        _LOGGER.debug(
+                            "Scheduled-dose authoritative Hero refresh "
+                            "completed successfully"
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "Scheduled-dose authoritative Hero refresh completed "
+                            "with update failure"
+                        )
+                except Exception:
+                    _LOGGER.debug(
+                        "Scheduled-dose authoritative Hero refresh failed",
+                        exc_info=True,
+                    )
+
+                pending = self._pending_eligibility_refresh_boundary
+                if (
+                    pending is None
+                    or pending == self._last_eligibility_refresh_boundary
+                ):
+                    self._pending_eligibility_refresh_boundary = None
+                    break
+
+                self._last_eligibility_refresh_boundary = pending
+                self._pending_eligibility_refresh_boundary = None
+                _LOGGER.debug(
+                    "Scheduled-dose timer fired; requesting authoritative Hero refresh"
+                )
+        finally:
+            self._eligibility_refresh_task = None
 
     @property
     def device_info(self) -> DeviceInfo:
