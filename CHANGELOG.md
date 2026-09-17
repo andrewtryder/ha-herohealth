@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.2...v0.5.3) (2026-09-17)
+
+
+### Bug Fixes
+
+* keep scheduled-dose timers on event loop and queue pending boundaries ([#24](https://github.com/andrewtryder/ha-herohealth/issues/24)) ([b232830](https://github.com/andrewtryder/ha-herohealth/commit/b2328306237907f74137f8ea8977186f88ff6141))
+
 ## [0.5.2](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.1...v0.5.2) (2026-09-15)
 
 
