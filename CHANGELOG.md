@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.4](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.3...v0.5.4) (2026-09-18)
+
+
+### Bug Fixes
+
+* make scheduled-dose refresh authoritative ([#26](https://github.com/andrewtryder/ha-herohealth/issues/26)) ([425ea2b](https://github.com/andrewtryder/ha-herohealth/commit/425ea2b25e1fe11a3ce1e671e24f2ea03077b1c9))
+
 ## [0.5.3](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.2...v0.5.3) (2026-09-17)
 
 
