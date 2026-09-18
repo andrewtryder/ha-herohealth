@@ -312,7 +312,7 @@ async def test_refresh_service_registry_awaits_registered_handler(hass, monkeypa
         DOMAIN, SERVICE_REFRESH, {"config_entry_id": entry.entry_id}, blocking=True
     )
 
-    coordinator.async_refresh.assert_awaited_once()
+    coordinator.async_request_refresh.assert_awaited_once()
     await async_unload_entry(hass, entry)
 
 
@@ -394,8 +394,8 @@ async def test_service_registry_targets_multiple_entries_and_unloads_last_servic
         blocking=True,
     )
 
-    assert first.runtime_data.coordinator.async_refresh.await_count == 0
-    second.runtime_data.coordinator.async_refresh.assert_awaited_once()
+    assert first.runtime_data.coordinator.async_request_refresh.await_count == 0
+    second.runtime_data.coordinator.async_request_refresh.assert_awaited_once()
     await async_unload_entry(hass, first)
     assert hass.services.has_service(DOMAIN, SERVICE_REFRESH)
     await async_unload_entry(hass, second)
@@ -1348,7 +1348,7 @@ async def test_dispense_dose_ignores_refresh_failure_after_success():
     async def failing_request_refresh():
         raise RuntimeError("refresh failed")
 
-    coordinator.async_refresh = failing_request_refresh
+    coordinator.async_request_refresh = failing_request_refresh
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
     admin_user = SimpleNamespace(id="admin", is_admin=True)
     hass = SimpleNamespace(
