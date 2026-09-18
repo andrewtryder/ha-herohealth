@@ -82,7 +82,7 @@ class HeroCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             while True:
                 try:
-                    await self.async_request_refresh()
+                    await self.async_refresh()
                     if self.last_update_success:
                         _LOGGER.debug(
                             "Scheduled-dose authoritative Hero refresh "
