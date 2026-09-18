@@ -799,7 +799,7 @@ async def test_scheduled_eligibility_refresh_is_deduplicated(hass, caplog):
         if refresh_count == 1:
             await event_a.wait()
 
-    coordinator.async_request_refresh = AsyncMock(side_effect=blocking_refresh)
+    coordinator.async_refresh = AsyncMock(side_effect=blocking_refresh)
     boundary_a = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
     boundary_b = datetime(2026, 9, 11, 13, 0, tzinfo=dt_util.UTC)
 
@@ -839,14 +839,14 @@ async def test_scheduled_eligibility_refresh_is_deduplicated(hass, caplog):
 
         # 5. Verify a second authoritative refresh occurs for B
         # 6. Verify the total refresh count is exactly 2
-        assert coordinator.async_request_refresh.await_count == 2
+        assert coordinator.async_refresh.await_count == 2
         assert coordinator._last_eligibility_refresh_boundary == boundary_b
         assert coordinator._pending_eligibility_refresh_boundary is None
 
         # 7. Verify duplicate B requests do not cause a third refresh
         coordinator.async_schedule_eligibility_refresh(boundary_b)
         await hass.async_block_till_done()
-        assert coordinator.async_request_refresh.await_count == 2
+        assert coordinator.async_refresh.await_count == 2
 
         assert (
             "Scheduled-dose authoritative Hero refresh completed successfully"
@@ -873,7 +873,7 @@ async def test_scheduled_eligibility_refresh_coalesces_newest_pending_boundary(h
         if refresh_count == 1:
             await event_a.wait()
 
-    coordinator.async_request_refresh = AsyncMock(side_effect=blocking_refresh)
+    coordinator.async_refresh = AsyncMock(side_effect=blocking_refresh)
     boundary_a = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
     boundary_b = datetime(2026, 9, 11, 13, 0, tzinfo=dt_util.UTC)
     boundary_c = datetime(2026, 9, 11, 14, 0, tzinfo=dt_util.UTC)
@@ -889,7 +889,7 @@ async def test_scheduled_eligibility_refresh_coalesces_newest_pending_boundary(h
     event_a.set()
     await hass.async_block_till_done()
 
-    assert coordinator.async_request_refresh.await_count == 2
+    assert coordinator.async_refresh.await_count == 2
     assert coordinator._last_eligibility_refresh_boundary == boundary_c
     assert coordinator._pending_eligibility_refresh_boundary is None
 
@@ -901,7 +901,7 @@ async def test_scheduled_eligibility_refresh_logs_update_failure(hass, caplog):
     entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
     coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
     coordinator.last_update_success = False
-    coordinator.async_request_refresh = AsyncMock()
+    coordinator.async_refresh = AsyncMock()
     boundary = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
 
     with caplog.at_level(
@@ -921,9 +921,7 @@ async def test_scheduled_eligibility_refresh_logs_exception(hass, caplog):
 
     entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
     coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
-    coordinator.async_request_refresh = AsyncMock(
-        side_effect=RuntimeError("refresh explosion")
-    )
+    coordinator.async_refresh = AsyncMock(side_effect=RuntimeError("refresh explosion"))
     boundary = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
 
     with caplog.at_level(

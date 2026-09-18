@@ -412,7 +412,7 @@ async def test_dispense_available_sensor_ha_event_loop_execution(hass, monkeypat
     coordinator = HeroCoordinator(hass, entry, session)
     coordinator._async_unsub_refresh()
     coordinator._update_interval_seconds = None
-    coordinator.async_request_refresh = AsyncMock()
+    coordinator.async_refresh = AsyncMock()
     coordinator.data = {
         "doses": {
             "dates": [
@@ -445,7 +445,7 @@ async def test_dispense_available_sensor_ha_event_loop_execution(hass, monkeypat
     await hass.async_block_till_done()
 
     # Verify coordinator refresh was requested without thread-safety RuntimeError
-    coordinator.async_request_refresh.assert_awaited_once()
+    coordinator.async_refresh.assert_awaited_once()
 
     # Clean up and ensure unsubs and armed boundary are cleared
     await sensor.async_will_remove_from_hass()
@@ -524,7 +524,7 @@ async def test_button_and_binary_sensor_joint_scheduled_time_refresh_and_dedupli
     coordinator = HeroCoordinator(hass, entry, session)
     coordinator._async_unsub_refresh()
     coordinator._update_interval_seconds = None
-    coordinator.async_request_refresh = AsyncMock()
+    coordinator.async_refresh = AsyncMock()
     coordinator.data = {
         "offline": {"hero_offline": False},
         "status": {},
@@ -567,7 +567,7 @@ async def test_button_and_binary_sensor_joint_scheduled_time_refresh_and_dedupli
     await hass.async_block_till_done()
 
     # Exactly one refresh should have been requested due to coordinator deduplication
-    coordinator.async_request_refresh.assert_awaited_once()
+    coordinator.async_refresh.assert_awaited_once()
 
     # Clean up both entities
     await button.async_will_remove_from_hass()

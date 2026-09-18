@@ -185,7 +185,7 @@ async def test_button_scheduled_time_ha_event_loop_execution(hass, monkeypatch):
     coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
     coordinator._async_unsub_refresh()
     coordinator._update_interval_seconds = None
-    coordinator.async_request_refresh = AsyncMock()
+    coordinator.async_refresh = AsyncMock()
     coordinator.data = {
         "doses": {
             "dates": [
@@ -216,7 +216,7 @@ async def test_button_scheduled_time_ha_event_loop_execution(hass, monkeypatch):
     await hass.async_block_till_done()
 
     # Verify coordinator refresh was requested without thread-safety RuntimeError
-    coordinator.async_request_refresh.assert_awaited_once()
+    coordinator.async_refresh.assert_awaited_once()
 
     # Clean up and ensure unsubs and armed boundary are cleared
     await button.async_will_remove_from_hass()
