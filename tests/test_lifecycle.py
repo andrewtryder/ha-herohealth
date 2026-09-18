@@ -312,7 +312,7 @@ async def test_refresh_service_registry_awaits_registered_handler(hass, monkeypa
         DOMAIN, SERVICE_REFRESH, {"config_entry_id": entry.entry_id}, blocking=True
     )
 
-    coordinator.async_request_refresh.assert_awaited_once()
+    coordinator.async_refresh.assert_awaited_once()
     await async_unload_entry(hass, entry)
 
 
@@ -394,8 +394,8 @@ async def test_service_registry_targets_multiple_entries_and_unloads_last_servic
         blocking=True,
     )
 
-    assert first.runtime_data.coordinator.async_request_refresh.await_count == 0
-    second.runtime_data.coordinator.async_request_refresh.assert_awaited_once()
+    assert first.runtime_data.coordinator.async_refresh.await_count == 0
+    second.runtime_data.coordinator.async_refresh.assert_awaited_once()
     await async_unload_entry(hass, first)
     assert hass.services.has_service(DOMAIN, SERVICE_REFRESH)
     await async_unload_entry(hass, second)
@@ -799,7 +799,7 @@ async def test_scheduled_eligibility_refresh_is_deduplicated(hass, caplog):
         if refresh_count == 1:
             await event_a.wait()
 
-    coordinator.async_request_refresh = AsyncMock(side_effect=blocking_refresh)
+    coordinator.async_refresh = AsyncMock(side_effect=blocking_refresh)
     boundary_a = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
     boundary_b = datetime(2026, 9, 11, 13, 0, tzinfo=dt_util.UTC)
 
@@ -839,14 +839,14 @@ async def test_scheduled_eligibility_refresh_is_deduplicated(hass, caplog):
 
         # 5. Verify a second authoritative refresh occurs for B
         # 6. Verify the total refresh count is exactly 2
-        assert coordinator.async_request_refresh.await_count == 2
+        assert coordinator.async_refresh.await_count == 2
         assert coordinator._last_eligibility_refresh_boundary == boundary_b
         assert coordinator._pending_eligibility_refresh_boundary is None
 
         # 7. Verify duplicate B requests do not cause a third refresh
         coordinator.async_schedule_eligibility_refresh(boundary_b)
         await hass.async_block_till_done()
-        assert coordinator.async_request_refresh.await_count == 2
+        assert coordinator.async_refresh.await_count == 2
 
         assert (
             "Scheduled-dose authoritative Hero refresh completed successfully"
@@ -873,7 +873,7 @@ async def test_scheduled_eligibility_refresh_coalesces_newest_pending_boundary(h
         if refresh_count == 1:
             await event_a.wait()
 
-    coordinator.async_request_refresh = AsyncMock(side_effect=blocking_refresh)
+    coordinator.async_refresh = AsyncMock(side_effect=blocking_refresh)
     boundary_a = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
     boundary_b = datetime(2026, 9, 11, 13, 0, tzinfo=dt_util.UTC)
     boundary_c = datetime(2026, 9, 11, 14, 0, tzinfo=dt_util.UTC)
@@ -889,7 +889,7 @@ async def test_scheduled_eligibility_refresh_coalesces_newest_pending_boundary(h
     event_a.set()
     await hass.async_block_till_done()
 
-    assert coordinator.async_request_refresh.await_count == 2
+    assert coordinator.async_refresh.await_count == 2
     assert coordinator._last_eligibility_refresh_boundary == boundary_c
     assert coordinator._pending_eligibility_refresh_boundary is None
 
@@ -901,7 +901,7 @@ async def test_scheduled_eligibility_refresh_logs_update_failure(hass, caplog):
     entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
     coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
     coordinator.last_update_success = False
-    coordinator.async_request_refresh = AsyncMock()
+    coordinator.async_refresh = AsyncMock()
     boundary = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
 
     with caplog.at_level(
@@ -921,7 +921,7 @@ async def test_scheduled_eligibility_refresh_logs_exception(hass, caplog):
 
     entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
     coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
-    coordinator.async_request_refresh = AsyncMock(
+    coordinator.async_refresh = AsyncMock(
         side_effect=RuntimeError("refresh explosion")
     )
     boundary = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
@@ -1350,7 +1350,7 @@ async def test_dispense_dose_ignores_refresh_failure_after_success():
     async def failing_request_refresh():
         raise RuntimeError("refresh failed")
 
-    coordinator.async_request_refresh = failing_request_refresh
+    coordinator.async_refresh = failing_request_refresh
     entry.runtime_data = SimpleNamespace(coordinator=coordinator)
     admin_user = SimpleNamespace(id="admin", is_admin=True)
     hass = SimpleNamespace(
