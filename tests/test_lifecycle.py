@@ -921,9 +921,7 @@ async def test_scheduled_eligibility_refresh_logs_exception(hass, caplog):
 
     entry = SimpleNamespace(entry_id="entry-1", unique_id="hero-1")
     coordinator = HeroCoordinator(hass, entry, SimpleNamespace())
-    coordinator.async_refresh = AsyncMock(
-        side_effect=RuntimeError("refresh explosion")
-    )
+    coordinator.async_refresh = AsyncMock(side_effect=RuntimeError("refresh explosion"))
     boundary = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
 
     with caplog.at_level(
