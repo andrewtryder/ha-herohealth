@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.5](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.4...v0.5.5) (2026-09-21)
+
+
+### Bug Fixes
+
+* avoid false low alerts and unknown dose counts ([#28](https://github.com/andrewtryder/ha-herohealth/issues/28)) ([37111f4](https://github.com/andrewtryder/ha-herohealth/commit/37111f403038eeb8df92e20d3922bf67ab4de858))
+
 ## [0.5.4](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.3...v0.5.4) (2026-09-18)
 
 
