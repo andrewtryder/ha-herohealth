@@ -28,7 +28,7 @@ def is_low_medication(level_enum: str | None, calculated: str | float | None) ->
         return True
     try:
         return float(calculated) < 0.25
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
 
 
