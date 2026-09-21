@@ -45,7 +45,7 @@ def dose_event_datetime(
             continue
         try:
             return parse_hero_datetime(value, tz), source
-        except (TypeError, ValueError, AttributeError):
+        except TypeError, ValueError, AttributeError:
             continue
     return None, None
 
