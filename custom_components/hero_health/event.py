@@ -67,7 +67,9 @@ class HeroDoseActivityEvent(HeroEntity, EventEntity):
             self._events_seeded = True
         else:
             new_events = [
-                event for event in events if dose_event_key(event) not in self._seen_event_keys
+                event
+                for event in events
+                if dose_event_key(event) not in self._seen_event_keys
             ]
             self._seen_event_keys = current_keys
             device_tz = getattr(self.coordinator, "device_tz", None)
