@@ -92,6 +92,12 @@ async def test_entity_values_and_slot_identity():
         == UnitOfRatio.PERCENTAGE
     )
     assert MetricSensor(coordinator, "doses_taken", "Taken").native_value == 10
+    missed = MetricSensor(coordinator, "doses_missed", "Missed")
+    assert missed.native_value == 2
+    coordinator.data["stats"]["stats"].pop("doses_missed")
+    assert missed.native_value == 0
+    coordinator.data["stats"]["stats"]["doses_missed"] = None
+    assert missed.native_value == 0
     slot = SlotSensor(coordinator, 1)
     unique_id = slot.unique_id
     assert unique_id == "fake-account_slot_1"
