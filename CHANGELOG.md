@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/andrewtryder/ha-herohealth/compare/v0.6.0...v0.6.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* extend Hero dispense completion timeout ([#33](https://github.com/andrewtryder/ha-herohealth/issues/33)) ([ed6b514](https://github.com/andrewtryder/ha-herohealth/commit/ed6b514f8598a9eb89f6c635724c342ec2cf8ad1))
+
 ## [0.6.0](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.5...v0.6.0) (2026-09-21)
 
 
