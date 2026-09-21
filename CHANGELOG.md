@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.5...v0.6.0) (2026-09-21)
+
+
+### Features
+
+* track Hero dose activity and last taken time ([#31](https://github.com/andrewtryder/ha-herohealth/issues/31)) ([b9f1630](https://github.com/andrewtryder/ha-herohealth/commit/b9f1630c8b29620f6a1522905d0ddfa12002767f))
+
 ## [0.5.5](https://github.com/andrewtryder/ha-herohealth/compare/v0.5.4...v0.5.5) (2026-09-21)
 
 
