@@ -95,11 +95,28 @@
       },
       "slot": {
         "name": "Slot {slot}"
+      },
+      "last_dose_taken": {
+        "name": "Last dose taken"
       }
     },
     "button": {
       "dispense_scheduled_dose": {
         "name": "Dispense scheduled dose"
+      }
+    },
+    "event": {
+      "dose_activity": {
+        "name": "Dose activity",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "taken": "Taken",
+              "taken_late": "Taken late",
+              "skipped": "Skipped"
+            }
+          }
+        }
       }
     }
   },
