@@ -13,15 +13,22 @@ if TYPE_CHECKING:
 
 
 def is_low_medication(level_enum: str | None, calculated: str | float | None) -> bool:
-    """Preserve Worker semantics: intentionally do not classify `midlow` as low."""
+    """Classify Hero medication levels without overriding an explicit enum state."""
+    normalized_enum = (level_enum or "").strip().lower()
     known_low = {"low", "alert", "empty"}
-    if (level_enum or "").lower() in known_low or str(
-        calculated or ""
-    ).lower() in known_low:
+    known_not_low = {"high", "medium", "mid", "midlow"}
+
+    if normalized_enum in known_low:
+        return True
+    if normalized_enum in known_not_low:
+        return False
+
+    normalized_calculated = str(calculated or "").strip().lower()
+    if normalized_calculated in known_low:
         return True
     try:
         return float(calculated) < 0.25
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return False
 
 
