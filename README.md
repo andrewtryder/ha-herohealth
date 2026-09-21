@@ -82,6 +82,10 @@ All entities are available like any other Home Assistant integration, making the
 - notifications
 - health-related helper views
 
+See [Automation examples](docs/AUTOMATIONS.md) for copyable patterns, including a
+twice-daily low-medication announcement that speaks the medication names instead of
+the numeric low-medication count.
+
 ---
 
 ## Installation
