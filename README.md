@@ -34,6 +34,7 @@ It gives you a simple Home Assistant view of:
 - dispenser connectivity
 - next scheduled dose
 - doses taken
+- last dose taken time and recent dose activity
 - doses missed
 - 7-day adherence
 - low-medication warnings
@@ -61,6 +62,8 @@ The integration creates sensors for the most useful everyday information, includ
 
 - **Next scheduled dose**
 - **Doses taken**
+- **Last dose taken** (Hero-reported actual time when available)
+- **Dose activity** events for taken, taken-late, and skipped doses
 - **Doses missed**
 - **7-day adherence**
 - **Dispenser connectivity**
@@ -136,6 +139,8 @@ Depending on your dispenser configuration, you may see entities such as:
 
 - `sensor.hero_health_next_scheduled_dose`
 - `sensor.hero_health_doses_taken`
+- `sensor.hero_health_last_dose_taken`
+- `event.hero_health_dose_activity`
 - `sensor.hero_health_doses_missed`
 - `sensor.hero_health_7_day_adherence`
 - `sensor.hero_health_medications`
