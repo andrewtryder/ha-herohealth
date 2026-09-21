@@ -219,6 +219,10 @@ async def async_dispense_dose(
                 )
             )
         except HeroDispenseOutcomeUnknown as err:
+            try:
+                await coordinator.async_request_refresh()
+            except Exception:
+                pass
             raise HomeAssistantError(
                 "Hero may have started dispensing but did not confirm completion; "
                 "do not retry this dose automatically",
