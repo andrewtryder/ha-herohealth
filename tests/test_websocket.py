@@ -93,6 +93,53 @@ async def test_dispense_waits_for_completed_and_answers_ping():
 
 
 @pytest.mark.asyncio
+async def test_dispense_extends_timeout_after_started_event():
+    class SlowCompletionWebSocket(FakeWebSocket):
+        async def __anext__(self):
+            if not self.messages:
+                raise StopAsyncIteration
+            next_message = self.messages[0]
+            payload = json.loads(next_message.data)
+            if payload.get("type") == "dispense_frontend_completed":
+                await asyncio.sleep(0.3)
+            return self.messages.pop(0)
+
+    ws = SlowCompletionWebSocket(
+        [
+            message(
+                {"type": "response_authorization", "payload": {"status": "success"}}
+            ),
+            message(
+                {
+                    "type": "dispense_frontend_preflight_status",
+                    "payload": {"status": True},
+                }
+            ),
+            message({"type": "dispense_frontend_started", "payload": {}}),
+            message(
+                {
+                    "type": "dispense_frontend_message",
+                    "payload": {"message": "Dispensing"},
+                }
+            ),
+            message(
+                {"type": "dispense_frontend_completed", "payload": {"status": True}}
+            ),
+        ]
+    )
+    client = HeroCloudClient(FakeSession(ws), "token", "account")
+
+    result = await client.dispense_scheduled_dose(
+        "2026-01-01T10:00:00+00:00",
+        timeout_seconds=0.2,
+        completion_timeout_seconds=0.6,
+    )
+
+    assert result["status"] == "completed"
+    assert result["messages"] == ["Dispensing"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload",
     [
@@ -463,7 +510,8 @@ async def test_websocket_debug_events_exclude_sensitive_payload_values(caplog):
             await client.dispense_scheduled_dose("scheduled")
 
     assert "unrecognized_terminal_event" in caplog.text
-    assert "has_error=True" in caplog.text
+    assert "has_nonempty_error=True" in caplog.text
+    assert "status_success=True" in caplog.text
     assert "sensitive-account" not in caplog.text
     assert "sensitive-scheduled-time" not in caplog.text
     assert "sensitive-error" not in caplog.text
