@@ -153,23 +153,29 @@ class HeroCloudClient:
         self,
         scheduled_datetime: str,
         timeout_seconds: float = 30,
+        completion_timeout_seconds: float = 120,
         on_start_sent: Callable[[], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         """Complete only after Hero's completion event, never the started event."""
         async with self._dispense_lock:
             return await self._async_dispense_scheduled_dose(
-                scheduled_datetime, timeout_seconds, on_start_sent
+                scheduled_datetime,
+                timeout_seconds,
+                completion_timeout_seconds,
+                on_start_sent,
             )
 
     async def _async_dispense_scheduled_dose(
         self,
         scheduled_datetime: str,
         timeout_seconds: float,
+        completion_timeout_seconds: float,
         on_start_sent: Callable[[], Awaitable[None]] | None,
     ) -> dict[str, Any]:
         headers = self._headers()
         phase = DispensePhase.AUTHORIZING
         start_sent = False
+        completion_timeout_extended = False
         try:
             async with self._session.ws_connect(
                 f"{self._base_url.replace('https://', 'wss://')}/ws/frontend/",
@@ -183,7 +189,7 @@ class HeroCloudClient:
                     }
                 )
                 messages: list[str] = []
-                async with asyncio.timeout(timeout_seconds):
+                async with asyncio.timeout(timeout_seconds) as timeout_scope:
                     async for message in ws:
                         if message.type != aiohttp.WSMsgType.TEXT:
                             raise HeroDispenseError(
@@ -205,17 +211,18 @@ class HeroCloudClient:
                             raise HeroDispenseError(
                                 "Hero WebSocket returned malformed data"
                             )
+                        status_value = body.get("status")
                         _LOGGER.debug(
                             "Hero dispense WebSocket event type=%r phase=%s "
-                            "has_status=%s status_is_true=%s has_can_dispense=%s "
-                            "can_dispense_is_true=%s has_error=%s",
+                            "has_status=%s status_success=%s has_can_dispense=%s "
+                            "can_dispense_is_true=%s has_nonempty_error=%s",
                             kind,
                             phase.value,
                             "status" in body,
-                            body.get("status") is True,
+                            status_value is True or status_value == "success",
                             "can_dispense" in body,
                             body.get("can_dispense") is True,
-                            "error" in body,
+                            bool(body.get("error")),
                         )
 
                         if kind == "request_ping":
@@ -301,6 +308,17 @@ class HeroCloudClient:
                             ):
                                 raise HeroDispenseError(
                                     "Dispense started account ID mismatch"
+                                )
+                            if not completion_timeout_extended:
+                                timeout_scope.reschedule(
+                                    asyncio.get_running_loop().time()
+                                    + completion_timeout_seconds
+                                )
+                                completion_timeout_extended = True
+                                _LOGGER.debug(
+                                    "Hero dispense started; extended completion "
+                                    "timeout to %.1f seconds",
+                                    completion_timeout_seconds,
                                 )
                         elif kind == "dispense_frontend_completed":
                             if phase != DispensePhase.START_SENT:
