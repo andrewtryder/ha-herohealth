@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
+from .dose_events import dose_event_attributes, latest_taken_event
 from .entity import HeroEntity, parse_hero_datetime
 from .schedule import next_recurring_schedule, resolve_schedule_timezone
 
@@ -37,6 +38,7 @@ async def async_setup_entry(
             MetricSensor(c, "doses_taken", "Doses taken"),
             MetricSensor(c, "doses_missed", "Doses missed"),
             NextDoseSensor(c),
+            LastDoseTakenSensor(c),
             *[SlotSensor(c, slot) for slot in range(1, 11)],
         ]
     )
@@ -193,6 +195,47 @@ class SlotSensor(HeroEntity, SensorEntity):
             "low": m.get("is_low"),
             "updated_at": m.get("updated_at"),
         }
+
+
+class LastDoseTakenSensor(HeroEntity, SensorEntity):
+    """Expose the timestamp Hero reports for the most recent taken dose."""
+
+    _attr_translation_key = "last_dose_taken"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:pill-clock"
+    _unrecorded_attributes = frozenset(
+        {
+            "status",
+            "status_display",
+            "scheduled_datetime",
+            "actual_datetime",
+            "medications",
+            "time_source",
+        }
+    )
+
+    def __init__(self, coordinator: HeroCoordinator) -> None:
+        super().__init__(coordinator, "last_dose_taken")
+
+    @property
+    def _latest(self):
+        device_tz = getattr(self.coordinator, "device_tz", None)
+        return latest_taken_event(
+            (self.coordinator.data or {}).get("events"), device_tz
+        )
+
+    @property
+    def native_value(self) -> datetime | None:
+        latest = self._latest
+        return latest[1] if latest is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        latest = self._latest
+        if latest is None:
+            return {}
+        event, _event_time, source = latest
+        return {**dose_event_attributes(event), "time_source": source}
 
 
 class NextDoseSensor(HeroEntity, SensorEntity):
