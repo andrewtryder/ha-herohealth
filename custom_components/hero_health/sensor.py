@@ -149,7 +149,10 @@ class MetricSensor(HeroEntity, SensorEntity):
         )
         if not isinstance(stats, dict):
             return None
-        return stats.get(self._key)
+        value = stats.get(self._key)
+        if value is None and self._key in {"doses_taken", "doses_missed"}:
+            return 0
+        return value
 
 
 class SlotSensor(HeroEntity, SensorEntity):

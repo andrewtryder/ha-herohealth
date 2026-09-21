@@ -35,6 +35,19 @@ def test_non_low_medication_rules(value):
 
 
 @pytest.mark.parametrize(
+    ("level_enum", "calculated"),
+    [
+        ("high", "low"),
+        ("medium", 0.1),
+        ("mid", 0.1),
+        ("midlow", 0.1),
+    ],
+)
+def test_explicit_non_low_enum_overrides_calculated_level(level_enum, calculated):
+    assert not is_low_medication(level_enum, calculated)
+
+
+@pytest.mark.parametrize(
     ("value", "expected"),
     [
         (0, True),
