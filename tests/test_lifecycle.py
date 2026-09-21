@@ -607,6 +607,11 @@ async def test_dispense_translates_safety_failures(error):
     with pytest.raises(HomeAssistantError):
         await _async_dispense(hass, call)
 
+    expected_refreshes = (
+        2 if isinstance(error, HeroDispenseOutcomeUnknown) else 1
+    )
+    assert coordinator.refreshed == expected_refreshes
+
 
 @pytest.mark.asyncio
 async def test_session_initialization_and_token_login_paths(monkeypatch):
