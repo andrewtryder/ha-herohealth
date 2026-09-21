@@ -1,0 +1,77 @@
+# Hero Health: twice-daily low-medication announcement
+#
+# Replace sensor.hero_health_low_medications with your actual entity ID.
+# For example, Home Assistant may name it:
+# sensor.hero_dispenser_low_medications
+#
+# The sensor state is the NUMBER of low medications. Medication names are in
+# the "medications" attribute.
+
+alias: Medication Level Check and Announcement
+description: >-
+  Refreshes Hero Health 15 minutes prior, then announces low medications at 7:30
+  AM and 6:30 PM.
+triggers:
+  - trigger: time
+    at: "07:15:00"
+    id: refresh_only
+  - trigger: time
+    at: "18:15:00"
+    id: refresh_only
+  - trigger: time
+    at: "07:30:00"
+    id: announce
+  - trigger: time
+    at: "18:30:00"
+    id: announce
+
+conditions: []
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: refresh_only
+        sequence:
+          - action: homeassistant.update_entity
+            target:
+              entity_id: sensor.hero_health_low_medications
+
+      - conditions:
+          - condition: trigger
+            id: announce
+        sequence:
+          - action: homeassistant.update_entity
+            target:
+              entity_id: sensor.hero_health_low_medications
+
+          - delay: "00:00:02"
+
+          - condition: template
+            value_template: >-
+              {% set value = states('sensor.hero_health_low_medications') %}
+              {{ value not in ['unknown', 'unavailable', 'none', '']
+                 and value | int(0) > 0 }}
+
+          - action: notify.google_assistant_sdk
+            data:
+              title: Medication Alert
+              message: >-
+                {% set entity = 'sensor.hero_health_low_medications' %}
+                {% set meds = state_attr(entity, 'medications') or [] %}
+                {% set count = states(entity) | int(0) %}
+                {% if meds | length > 0 %}
+                  {% if count == 1 %}
+                    Attention. One medication is running low:
+                    {{ meds | join(', ') }}.
+                  {% else %}
+                    Attention. {{ count }} medications are running low:
+                    {{ meds | join(', ') }}.
+                  {% endif %}
+                {% elif count == 1 %}
+                  Attention. One medication is reporting low.
+                {% else %}
+                  Attention. {{ count }} medications are reporting low.
+                {% endif %}
+
+mode: single
