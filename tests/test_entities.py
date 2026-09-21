@@ -21,6 +21,7 @@ from custom_components.hero_health.coordinator import HeroCoordinator
 from custom_components.hero_health.entity import HeroEntity
 from custom_components.hero_health.sensor import (
     AdherenceSensor,
+    LastDoseTakenSensor,
     LowMedicationsSensor,
     MedicationsSensor,
     MetricSensor,
@@ -41,6 +42,18 @@ class FakeCoordinator:
                 {"slot": 2, "name": "Example B", "is_low": True},
             ],
             "stats": {"stats": {"adherence": 87, "doses_taken": 10, "doses_missed": 2}},
+            "events": {
+                "today": [
+                    {
+                        "status": "taken",
+                        "status_display": "Taken",
+                        "scheduled_datetime": "2026-09-21T07:45:00+00:00",
+                        "actual_datetime": "2026-09-21T07:48:01+00:00",
+                        "pills": [{"name": "Example A"}],
+                    }
+                ],
+                "yesterday": [],
+            },
             "doses": {
                 "dates": [
                     {"times": [{"scheduled_datetime": "2099-01-01T10:00:00+00:00"}]}
@@ -113,6 +126,13 @@ async def test_entity_values_and_slot_identity():
     assert SlotLowSensor(coordinator, 1).is_on
     assert not SlotLowSensor(coordinator, 3).is_on
     assert NextDoseSensor(coordinator).native_value.tzinfo is not None
+    last_taken = LastDoseTakenSensor(coordinator)
+    assert last_taken.native_value == datetime(
+        2026, 9, 21, 7, 48, 1, tzinfo=dt_util.UTC
+    )
+    assert last_taken.extra_state_attributes["status"] == "taken"
+    assert last_taken.extra_state_attributes["medications"] == ["Example A"]
+    assert last_taken.extra_state_attributes["time_source"] == "actual"
 
 
 def test_unique_id_stability_across_recreated_config_entry():
@@ -137,7 +157,7 @@ async def test_platform_creates_expected_sensor_entities():
     entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinator=coordinator))
     added = []
     await async_setup_entry(None, entry, added.extend)
-    assert len(added) == 16
+    assert len(added) == 17
     assert {entity.unique_id for entity in added if "slot_" in entity.unique_id} == {
         f"fake-account_slot_{slot}" for slot in range(1, 11)
     }
