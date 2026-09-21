@@ -4,16 +4,14 @@ from types import SimpleNamespace
 
 from homeassistant.util import dt as dt_util
 
+from custom_components.hero_health import event as event_platform
 from custom_components.hero_health.dose_events import (
     dose_event_attributes,
     dose_event_key,
     latest_taken_event,
     tracked_dose_events,
 )
-from custom_components.hero_health.event import (
-    HeroDoseActivityEvent,
-    async_setup_entry as async_setup_event_entry,
-)
+from custom_components.hero_health.event import HeroDoseActivityEvent
 
 
 class FakeCoordinator:
@@ -110,7 +108,7 @@ async def test_event_platform_creates_one_entity():
     coordinator = FakeCoordinator()
     entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinator=coordinator))
     added = []
-    await async_setup_event_entry(None, entry, added.extend)
+    await event_platform.async_setup_entry(None, entry, added.extend)
     assert len(added) == 1
     assert isinstance(added[0], HeroDoseActivityEvent)
 
