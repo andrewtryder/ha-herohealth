@@ -63,8 +63,8 @@ class DispenseScheduledDoseButton(HeroEntity, ButtonEntity):
 
     @property
     def available(self) -> bool:
-        """Expose the button only while the same safety rule reports eligibility."""
-        return super().available and self._evaluation.eligible
+        """Report integration availability independently of dispense eligibility."""
+        return super().available
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
