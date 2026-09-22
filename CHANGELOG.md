@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/andrewtryder/ha-herohealth/compare/v0.6.1...v0.6.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* keep dispense button available when ineligible ([#35](https://github.com/andrewtryder/ha-herohealth/issues/35)) ([7f51eaf](https://github.com/andrewtryder/ha-herohealth/commit/7f51eaf45466cd73cc315fae051668e76d54b033))
+
 ## [0.6.1](https://github.com/andrewtryder/ha-herohealth/compare/v0.6.0...v0.6.1) (2026-09-21)
 
 
