@@ -150,7 +150,7 @@ async def test_button_scheduled_time_refreshes_authoritative_dose_state(monkeypa
             }
         ]
     }
-    assert not button.available
+    assert button.available
 
     timers = []
     monkeypatch.setattr(
