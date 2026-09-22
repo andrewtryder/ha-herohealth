@@ -45,7 +45,7 @@ def _eligible_doses(scheduled: datetime):
     }
 
 
-def test_dispense_button_available_only_inside_eligible_window(monkeypatch):
+def test_dispense_button_availability_is_independent_of_eligibility(monkeypatch):
     coordinator = FakeCoordinator()
     button = DispenseScheduledDoseButton(coordinator)
     now = datetime(2026, 9, 11, 12, 0, tzinfo=dt_util.UTC)
@@ -56,6 +56,9 @@ def test_dispense_button_available_only_inside_eligible_window(monkeypatch):
     assert button.extra_state_attributes["scheduled_datetime"] is not None
 
     coordinator.data["doses"] = _eligible_doses(now + timedelta(hours=2))
+    assert button.available
+
+    coordinator.last_update_success = False
     assert not button.available
 
 
@@ -147,7 +150,7 @@ async def test_button_scheduled_time_refreshes_authoritative_dose_state(monkeypa
             }
         ]
     }
-    assert not button.available
+    assert button.available
 
     timers = []
     monkeypatch.setattr(
@@ -207,7 +210,7 @@ async def test_button_scheduled_time_ha_event_loop_execution(hass, monkeypatch):
     button.entity_id = "button.hero_dispense_scheduled_dose"
     await button.async_added_to_hass()
 
-    assert not button.available
+    assert button.available
     assert button._scheduled_refresh_at == scheduled
     assert len(button._timer_unsubs) > 0
 

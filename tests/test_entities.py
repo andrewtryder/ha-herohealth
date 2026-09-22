@@ -585,7 +585,7 @@ async def test_button_and_binary_sensor_joint_scheduled_time_refresh_and_dedupli
     await button.async_added_to_hass()
     await sensor.async_added_to_hass()
 
-    assert not button.available
+    assert button.available
     assert not sensor.is_on
 
     # Advance time past scheduled boundary via real HA time tracking machinery
