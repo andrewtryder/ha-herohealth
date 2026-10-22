@@ -66,6 +66,9 @@ class Http:
         self.calls.append(("post", args, kwargs))
         return self.responses.pop(0)
 
+    def detach(self):
+        self.closed = True
+
     async def close(self):
         self.closed = True
 
@@ -252,7 +255,7 @@ async def test_session_execute_storage_and_close_paths():
     session._store.async_load = AsyncMock(return_value={"last_dispense_id": "dose"})
     assert await session.async_last_dispense_id() == "dose"
     await session.async_close()
-    assert not session._http.closed
+    assert session._http is None
 
 
 @pytest.mark.asyncio

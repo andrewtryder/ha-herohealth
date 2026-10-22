@@ -256,6 +256,21 @@ async def test_session_non_persist_paths():
 
     await session.async_close()
     mock_http.detach.assert_called_once()
+    assert session._http is None
+
+
+@pytest.mark.asyncio
+async def test_session_persist_close_detaches_http():
+    from unittest.mock import Mock
+
+    session = object.__new__(HeroSession)
+    session._persist = True
+    mock_http = SimpleNamespace(detach=Mock())
+    session._http = mock_http
+
+    await session.async_close()
+    mock_http.detach.assert_called_once()
+    assert session._http is None
 
 
 @pytest.mark.asyncio

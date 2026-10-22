@@ -703,10 +703,11 @@ async def test_real_session_owns_and_closes_its_aiohttp_session(hass):
     session = HeroSession(
         hass, "entry", "test@example.invalid", "fake-password", "fake-account"
     )
-    assert not session._http.closed
+    http = session._http
+    assert not http.closed
     await session.async_close()
-    # The Home Assistant helper owns and closes the isolated session on shutdown.
-    assert not session._http.closed
+    assert http.closed
+    assert session._http is None
 
 
 @pytest.mark.asyncio
