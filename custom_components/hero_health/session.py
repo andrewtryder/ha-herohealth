@@ -46,13 +46,14 @@ class HeroSession:
         self._store = Store[dict[str, Any]](hass, 1, f"hero_health.{entry_id}")
         self._persist = persist
         # Hero's authentication cookies must not be shared with Home Assistant.
-        # When persist is False (e.g. config-flow validation), auto_cleanup is False
-        # so that async_close() can explicitly detach() without accumulating listeners.
+        # auto_cleanup is False so async_close() always owns detach(); otherwise a
+        # persistent entry would only close the session on Home Assistant stop and
+        # leak a clientsession across reloads (options changes, etc.).
         self._http = async_create_clientsession(
             hass,
             cookie_jar=aiohttp.CookieJar(),
             timeout=aiohttp.ClientTimeout(total=25),
-            auto_cleanup=persist,
+            auto_cleanup=False,
         )
         self._auth = HeroAuthClient(self._http)
         self._tokens: HeroTokens | None = None
@@ -379,7 +380,8 @@ class HeroSession:
         return False, None
 
     async def async_close(self) -> None:
-        """Release per-entry state; detach session if not auto-cleaned."""
-        if not self._persist and self._http is not None:
+        """Close the per-entry HTTP session (including on config-entry reload)."""
+        if self._http is not None:
             self._http.detach()
+            self._http = None
         return None
