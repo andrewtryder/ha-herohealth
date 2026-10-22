@@ -5,8 +5,7 @@
 
 ### Bug Fixes
 
-* close Hero HTTP session on config entry reload ([990240f](https://github.com/andrewtryder/ha-herohealth/commit/990240f7c120e7f1825e6c78796ef2132f3b3256))
-* close Hero HTTP session on config entry reload ([c8dd924](https://github.com/andrewtryder/ha-herohealth/commit/c8dd924e3a6b66950952dba8e1caf1c94b0e1d56))
+* close Hero HTTP session on config entry reload ([#47](https://github.com/andrewtryder/ha-herohealth/issues/47)) ([990240f](https://github.com/andrewtryder/ha-herohealth/commit/990240f7c120e7f1825e6c78796ef2132f3b3256))
 
 ## [0.6.2](https://github.com/andrewtryder/ha-herohealth/compare/v0.6.1...v0.6.2) (2026-09-22)
 
