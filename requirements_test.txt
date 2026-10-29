@@ -1,7 +1,7 @@
 # Deterministic baseline: pytest-homeassistant-custom-component 0.13.357 pins
 # Home Assistant 2026.8.3, our minimum supported Home Assistant release.
 pytest==9.0.3
-pytest-asyncio==1.4.0
+pytest-asyncio==1.4.1
 pytest-cov==7.1.0
 pytest-homeassistant-custom-component==0.13.357
 ruff==0.17.1
