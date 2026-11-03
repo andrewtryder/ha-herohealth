@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.4](https://github.com/andrewtryder/ha-herohealth/compare/v0.6.3...v0.6.4) (2026-11-03)
+
+
+### Bug Fixes
+
+* **auth:** recover from rejected refresh tokens and hand off reauth tokens ([#55](https://github.com/andrewtryder/ha-herohealth/issues/55)) ([d6f5177](https://github.com/andrewtryder/ha-herohealth/commit/d6f5177680322e1d39f5510a8a5edb928017a5ba))
+
 ## [0.6.3](https://github.com/andrewtryder/ha-herohealth/compare/v0.6.2...v0.6.3) (2026-10-22)
 
 
