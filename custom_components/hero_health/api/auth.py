@@ -29,6 +29,21 @@ AUTH_BASE_URL = "https://id.herohealth.com"
 ANDROID_USER_AGENT = (
     "Dalvik/2.1.0 (Linux; U; Android 15; sdk_gphone64_arm64 Build/AE3A.240806.036)"
 )
+# RFC 6749 section 5.2 token endpoint error codes.
+OAUTH_ERROR_CODES = frozenset(
+    {
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+    }
+)
+# Codes that mean the presented grant or client is no longer acceptable.
+OAUTH_CREDENTIAL_ERRORS = frozenset(
+    {"invalid_client", "invalid_grant", "unauthorized_client"}
+)
 
 
 class _LoginFieldsParser(HTMLParser):
@@ -101,6 +116,20 @@ def validate_login_destination(location: str, expected_base_url: str) -> str:
     ):
         raise HeroAuthenticationError("Hero login returned an unexpected destination")
     return location
+
+
+async def _oauth_error_code(response: Any) -> str | None:
+    """Return only the standardized OAuth ``error`` code from a token response.
+
+    ``error_description`` and the raw body are deliberately ignored so no
+    server-provided text (which could echo grant material) reaches logs.
+    """
+    try:
+        body = await response.json(content_type=None)
+    except aiohttp.ClientError, ValueError, TypeError:
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    return error if isinstance(error, str) and error in OAUTH_ERROR_CODES else None
 
 
 def _raise_for_status(status: int, headers: Any) -> None:
@@ -227,6 +256,19 @@ class HeroAuthClient:
                     "User-Agent": ANDROID_USER_AGENT,
                 },
             ) as response:
+                if response.status == 400:
+                    error_code = await _oauth_error_code(response)
+                    if (
+                        error_code in OAUTH_CREDENTIAL_ERRORS
+                        or data.get("grant_type") == "refresh_token"
+                    ):
+                        # RFC 6749 section 5.2: an expired, revoked, or rotated
+                        # refresh token is reported as HTTP 400 invalid_grant.
+                        # Treat it as an authentication failure so the session can
+                        # fall back to password login or trigger reauth.
+                        raise HeroAuthenticationError(
+                            "Hero rejected the stored authorization grant"
+                        )
                 _raise_for_status(response.status, response.headers)
                 payload: dict[str, Any] = await response.json(content_type=None)
             return HeroTokens.from_response(payload, time.time())

@@ -21,6 +21,7 @@ from .api.exceptions import (
     HeroAuthenticationError,
     HeroConnectionError,
     HeroDispenseOutcomeUnknown,
+    HeroError,
 )
 from .const import (
     ATTR_SCHEDULED_DATETIME,
@@ -124,10 +125,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: HeroHealthConfigEntry) -
             session.device_tz = coordinator.device_tz
     except HeroAuthenticationError as err:
         await session.async_close()
-        raise ConfigEntryAuthFailed("Hero authentication failed") from err
+        raise ConfigEntryAuthFailed(
+            translation_domain=DOMAIN, translation_key="authentication_required"
+        ) from err
     except HeroConnectionError as err:
         await session.async_close()
-        raise ConfigEntryNotReady("Unable to connect to Hero") from err
+        raise ConfigEntryNotReady(
+            translation_domain=DOMAIN, translation_key="setup_connection_failure"
+        ) from err
+    except HeroError as err:
+        await session.async_close()
+        raise ConfigEntryNotReady(
+            translation_domain=DOMAIN, translation_key="unexpected_response"
+        ) from err
     except Exception:
         await session.async_close()
         raise

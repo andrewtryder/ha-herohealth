@@ -34,6 +34,16 @@
           "email": "Email address used to sign in to the Hero app.",
           "password": "Password for this Hero account. Home Assistant stores it for reauthentication."
         }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate Hero Health",
+        "description": "Hero rejected the saved sign-in for {email}. Enter the current password for this Hero account.",
+        "data": {
+          "password": "Hero password"
+        },
+        "data_description": {
+          "password": "Current password for your Hero account. Home Assistant stores it so the integration can reauthenticate if Hero refresh credentials expire."
+        }
       }
     },
     "error": {
@@ -176,6 +186,12 @@
     },
     "admin_required": {
       "message": "Administrator privileges are required to dispense medication remotely."
+    },
+    "setup_connection_failure": {
+      "message": "Unable to connect to Hero. Home Assistant will retry automatically."
+    },
+    "unexpected_response": {
+      "message": "Hero returned an unexpected response. Home Assistant will retry automatically."
     }
   }
 }

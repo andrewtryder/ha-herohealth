@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -25,7 +26,19 @@ async def async_get_config_entry_diagnostics(
     medications = data.get("medications")
     options = getattr(entry, "options", {})
     scan_interval = options.get("scan_interval") if isinstance(options, dict) else None
+    session = getattr(entry.runtime_data, "session", None)
+    tokens = getattr(session, "tokens", None)
     return {
+        "auth": {
+            # Booleans only: never credential material (or even its field names).
+            "session_cached": tokens is not None,
+            "can_refresh": bool(getattr(tokens, "refresh_token", None)),
+            "session_expired": (
+                time.time() >= tokens.created_at + tokens.expires_in
+                if tokens is not None
+                else None
+            ),
+        },
         "entry": {
             "has_unique_id": bool(getattr(entry, "unique_id", None)),
             "scan_interval": (

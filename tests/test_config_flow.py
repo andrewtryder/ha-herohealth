@@ -14,6 +14,7 @@ from custom_components.hero_health.api.exceptions import (
     HeroConnectionError,
     HeroError,
 )
+from custom_components.hero_health.api.models import HeroTokens
 from custom_components.hero_health.const import CONF_ACCOUNT_ID, DOMAIN
 
 
@@ -28,7 +29,7 @@ def test_config_translation_descriptions_exist():
             / "custom_components/hero_health/translations/en.json"
         ).read_text()
     )
-    for step in ("user", "reconfigure", "account"):
+    for step in ("user", "reconfigure", "account", "reauth_confirm"):
         content = translations["config"]["step"][step]
         assert content["description"]
         assert content["data_description"]
@@ -57,6 +58,7 @@ class FakeSession:
 
     def __init__(self, *_args, **_kwargs):
         self.client = FakeClient(self.accounts)
+        self.tokens = HeroTokens("fresh-access", "fresh-refresh", 3600, 9999999999)
 
     async def async_initialize(self):
         if self.initialize_errors:
@@ -219,16 +221,133 @@ async def test_account_step_without_input_shows_form(hass, fake_sessions):
     assert step_result["step_id"] == "account"
 
 
+def _stored(key, data):
+    return {"version": 1, "minor_version": 1, "key": key, "data": data}
+
+
 @pytest.mark.asyncio
-async def test_reauth_updates_existing_entry(hass, fake_sessions):
+async def test_reauth_updates_existing_entry(hass, fake_sessions, hass_storage):
+    """Regression: reauth must replace the stale persisted refresh token.
+
+    Previously reauth only updated entry.data; the reloaded entry reloaded the
+    rejected refresh token from storage and failed setup forever.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="fake-account-1",
+        data={
+            CONF_EMAIL: "test@example.invalid",
+            CONF_PASSWORD: "old-password",
+            CONF_ACCOUNT_ID: "fake-account-1",
+        },
+    )
+    entry.add_to_hass(hass)
+    key = f"hero_health.{entry.entry_id}"
+    journal = {"2026-01-01T08:00:00+00:00": {"status": "completed"}}
+    hass_storage[key] = _stored(
+        key,
+        {
+            "identity": {
+                "email": "test@example.invalid",
+                "account_id": "fake-account-1",
+            },
+            "tokens": HeroTokens("stale", "stale-refresh", 3600, 1).as_dict(),
+            "dispense_journal": journal,
+        },
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+    )
+    assert result["type"] == "form"
+    assert result["step_id"] == "reauth_confirm"
+    assert result["description_placeholders"]["email"] == "test@example.invalid"
+    assert [str(k) for k in result["data_schema"].schema] == [CONF_PASSWORD]
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PASSWORD: "fake-password"}
+    )
+    assert result["type"] == "abort"
+    assert result["reason"] == "reauth_successful"
+    assert entry.data[CONF_PASSWORD] == "fake-password"
+    assert entry.data[CONF_EMAIL] == "test@example.invalid"
+    assert entry.unique_id == "fake-account-1"
+    saved = hass_storage[key]["data"]
+    assert saved["tokens"]["refresh_token"] == "fresh-refresh"
+    # Dispense idempotency state survives a same-identity reauth.
+    assert saved["dispense_journal"] == journal
+
+
+@pytest.mark.asyncio
+async def test_reauth_confirm_shows_invalid_auth_on_same_step(hass, fake_sessions):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="fake-account-1",
+        data={
+            CONF_EMAIL: "test@example.invalid",
+            CONF_PASSWORD: "old-password",
+            CONF_ACCOUNT_ID: "fake-account-1",
+        },
+    )
+    entry.add_to_hass(hass)
+    fake_sessions.initialize_error = HeroAuthenticationError("bad")
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PASSWORD: "wrong-password"}
+    )
+    assert result["type"] == "form"
+    assert result["step_id"] == "reauth_confirm"
+    assert result["errors"] == {"base": "invalid_auth"}
+    assert entry.data[CONF_PASSWORD] == "old-password"
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_hands_off_tokens_and_drops_foreign_journal(
+    hass, fake_sessions, hass_storage
+):
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="fake-account-1",
         data={
             CONF_EMAIL: "old@example.invalid",
-            CONF_PASSWORD: "old-password",
+            CONF_PASSWORD: "old",
             CONF_ACCOUNT_ID: "fake-account-1",
         },
+    )
+    entry.add_to_hass(hass)
+    key = f"hero_health.{entry.entry_id}"
+    hass_storage[key] = _stored(
+        key,
+        {
+            "identity": {"email": "old@example.invalid", "account_id": "x"},
+            "tokens": HeroTokens("stale", "stale-refresh", 3600, 1).as_dict(),
+            "dispense_journal": {"2026-01-01T08:00:00+00:00": {"status": "x"}},
+        },
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "reconfigure", "entry_id": entry.entry_id}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_EMAIL: "new@example.invalid", CONF_PASSWORD: "fake-password"},
+    )
+    assert result["reason"] == "reconfigure_successful"
+    saved = hass_storage[key]["data"]
+    assert saved["tokens"]["refresh_token"] == "fresh-refresh"
+    assert saved["identity"] == {
+        "email": "new@example.invalid",
+        "account_id": "fake-account-1",
+    }
+    assert "dispense_journal" not in saved
+
+
+@pytest.mark.asyncio
+async def test_reauth_legacy_entry_without_account_uses_full_flow(hass, fake_sessions):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_EMAIL: "old@example.invalid", CONF_PASSWORD: "old-password"},
     )
     entry.add_to_hass(hass)
     result = await hass.config_entries.flow.async_init(
@@ -236,39 +355,7 @@ async def test_reauth_updates_existing_entry(hass, fake_sessions):
         context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
     )
     assert result["type"] == "form"
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_EMAIL: "test@example.invalid", CONF_PASSWORD: "fake-password"},
-    )
-    assert result["type"] == "abort"
-    assert result["reason"] == "reauth_successful"
-    assert entry.data[CONF_PASSWORD] == "fake-password"
-    assert entry.unique_id == "fake-account-1"
-
-
-@pytest.mark.asyncio
-async def test_reauth_aborts_on_wrong_account(hass, fake_sessions):
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="original-account",
-        data={
-            CONF_EMAIL: "old@example.invalid",
-            CONF_PASSWORD: "old-password",
-            CONF_ACCOUNT_ID: "original-account",
-        },
-    )
-    entry.add_to_hass(hass)
-    # fake_sessions returns fake-account-1
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_EMAIL: "test@example.invalid", CONF_PASSWORD: "fake-password"},
-    )
-    assert result["type"] == "abort"
-    assert result["reason"] == "wrong_account"
+    assert result["step_id"] == "user"
 
 
 @pytest.mark.asyncio
