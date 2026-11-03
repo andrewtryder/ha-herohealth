@@ -20,6 +20,35 @@ from .api.models import HeroTokens
 from .const import DISPENSE_LATE_WINDOW
 
 
+def _storage_key(entry_id: str) -> str:
+    return f"hero_health.{entry_id}"
+
+
+async def async_store_entry_tokens(
+    hass: HomeAssistant,
+    entry_id: str,
+    tokens: HeroTokens,
+    email: str,
+    account_id: str | None,
+) -> None:
+    """Replace an entry's persisted tokens with freshly validated ones.
+
+    Used by reauth/reconfigure so the reloaded entry does not retry a stale
+    refresh token. Dispense idempotency state is preserved only when the
+    identity is unchanged, mirroring ``HeroSession.async_initialize``.
+    """
+    store = Store[dict[str, Any]](hass, 1, _storage_key(entry_id))
+    identity = {"email": email.strip().lower(), "account_id": account_id or ""}
+    saved = await store.async_load()
+    state: dict[str, Any] = (
+        dict(saved)
+        if isinstance(saved, dict) and saved.get("identity") == identity
+        else {"identity": identity}
+    )
+    state["tokens"] = tokens.as_dict()
+    await store.async_save(state)
+
+
 class HeroSession:
     def __init__(
         self,
@@ -43,7 +72,7 @@ class HeroSession:
             "email": email.strip().lower(),
             "account_id": account_id or "",
         }
-        self._store = Store[dict[str, Any]](hass, 1, f"hero_health.{entry_id}")
+        self._store = Store[dict[str, Any]](hass, 1, _storage_key(entry_id))
         self._persist = persist
         # Hero's authentication cookies must not be shared with Home Assistant.
         # auto_cleanup is False so async_close() always owns detach(); otherwise a
@@ -63,6 +92,11 @@ class HeroSession:
         self.client: HeroCloudClient | None = None
         self._lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
+
+    @property
+    def tokens(self) -> HeroTokens | None:
+        """Return the current token set (used to hand validated tokens to an entry)."""
+        return self._tokens
 
     @property
     def device_tz(self) -> tzinfo | None:
@@ -288,9 +322,15 @@ class HeroSession:
                     )
             except HeroAuthenticationError:
                 if not force_login and self._email and self._password:
-                    tokens = await self._auth.login_with_password(
-                        self._email, self._password
-                    )
+                    # The stored grant is dead; never retry it on a later start.
+                    self._tokens = None
+                    try:
+                        tokens = await self._auth.login_with_password(
+                            self._email, self._password
+                        )
+                    except HeroAuthenticationError:
+                        await self._async_save_state()
+                        raise
                 else:
                     raise
             self._tokens = tokens

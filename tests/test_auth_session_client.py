@@ -203,6 +203,96 @@ async def test_token_http_errors_distinguish_auth_and_transient_failures(status,
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"error": "invalid_grant"},
+        {"error": "invalid_grant", "error_description": "fake-refresh is revoked"},
+        {"error": "invalid_request"},
+        None,
+        "not-a-dict",
+    ],
+)
+async def test_refresh_http_400_is_authentication_failure(body):
+    """Regression: a rejected refresh token (RFC 6749 400) must not be a generic
+    API error, otherwise password fallback and reauth never run."""
+    auth = HeroAuthClient(Http([Response(status=400, json_data=body)]))
+    with pytest.raises(HeroAuthenticationError) as err:
+        await auth.refresh_access_token("fake-refresh")
+    assert "fake-refresh" not in str(err.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        ({"error": "invalid_grant"}, HeroAuthenticationError),
+        ({"error": "invalid_client"}, HeroAuthenticationError),
+        ({"error": "invalid_request"}, HeroApiError),
+        ({"error": "made_up"}, HeroApiError),
+    ],
+)
+async def test_code_exchange_http_400_classification(body, error):
+    auth = HeroAuthClient(Http([Response(status=400, json_data=body)]))
+    with pytest.raises(error):
+        await auth.exchange_code("fake-code", "fake-verifier")
+
+
+@pytest.mark.asyncio
+async def test_rejected_refresh_falls_back_to_password_and_persists():
+    session = object.__new__(HeroSession)
+    session._lock = asyncio.Lock()
+    session._state_lock = asyncio.Lock()
+    session._tokens = HeroTokens("stale", "stale-refresh", 3600, 0)
+    session._email, session._password = "test@example.invalid", "fake-password"
+    session._identity = {"email": "test@example.invalid", "account_id": "a"}
+    session._persist = True
+    session._dispense_journal = {}
+    session._last_dispense_id = session._dispense_attempt = None
+    session._store = SimpleNamespace(async_save=AsyncMock())
+    session.client = None
+    session._auth = HeroAuthClient(
+        Http(
+            [
+                Response(status=400, json_data={"error": "invalid_grant"}),
+                Response(status=503),
+            ]
+        )
+    )
+    session._auth.login_with_password = AsyncMock(
+        return_value=HeroTokens("new", "new-refresh", 3600, 9999999999)
+    )
+    await session._async_ensure_tokens()
+    assert session.tokens.refresh_token == "new-refresh"
+    saved = session._store.async_save.await_args.args[0]
+    assert saved["tokens"]["refresh_token"] == "new-refresh"
+
+
+@pytest.mark.asyncio
+async def test_rejected_refresh_and_password_clears_stale_tokens():
+    session = object.__new__(HeroSession)
+    session._lock = asyncio.Lock()
+    session._state_lock = asyncio.Lock()
+    session._tokens = HeroTokens("stale", "stale-refresh", 3600, 0)
+    session._email, session._password = "test@example.invalid", "fake-password"
+    session._identity = {"email": "test@example.invalid", "account_id": "a"}
+    session._persist = True
+    session._dispense_journal = {}
+    session._last_dispense_id = session._dispense_attempt = None
+    session._store = SimpleNamespace(async_save=AsyncMock())
+    session.client = None
+    session._auth = SimpleNamespace(
+        refresh_access_token=AsyncMock(side_effect=HeroAuthenticationError("x")),
+        login_with_password=AsyncMock(side_effect=HeroAuthenticationError("y")),
+    )
+    with pytest.raises(HeroAuthenticationError):
+        await session._async_ensure_tokens()
+    saved = session._store.async_save.await_args.args[0]
+    assert "tokens" not in saved
+    assert session.tokens is None
+
+
+@pytest.mark.asyncio
 async def test_client_headers_requests_and_endpoint_wrappers():
     http = Http([Response(text='{"ok": true}'), Response(status=401)])
     client = HeroCloudClient(
