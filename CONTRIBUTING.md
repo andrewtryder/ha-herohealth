@@ -1,11 +1,32 @@
 # Contributing
 
-Use the devcontainer (VS Code: **Dev Containers: Reopen in Container**) for the
-supported Python 3.14 environment and the deterministic Home Assistant 2026.8.3
-baseline. It installs `/home/vscode/.venv` from `requirements_test.txt`.
+Use the devcontainer (VS Code: **Dev Containers: Reopen in Container**) or a local
+Python 3.14 virtual environment (`.venv`) initialized from `requirements_test.txt`.
 
-Run `pytest`, `ruff check .`, `ruff format --check .`, and
-`pre-commit run --all-files`. Start local Home Assistant at `http://localhost:8123`
+## Local Validation Contract
+
+The portfolio standard validation interface executes the entire local test, linting, and hygiene contract:
+
+```bash
+./scripts/validate-local.sh
+```
+
+Pre-commit git hooks can be installed via:
+
+```bash
+pre-commit install
+```
+
+Individual checks can also be run directly:
+
+```bash
+ruff check .
+ruff format --check .
+pytest
+pre-commit run --all-files
+```
+
+Pytest runs in offline isolation with `-m "not live"` and enforces a strict `>=95%` component statement coverage gate (currently achieving >95.5%). Start local Home Assistant at `http://localhost:8123`
 with `scripts/run-ha-dev`; it pins Home Assistant 2026.8.3. Configure Hero through
 the UI and test the real config flow there manually. The `.ha-dev/` directory is
 sensitive: Home Assistant can persist real integration credentials in it. Docker
