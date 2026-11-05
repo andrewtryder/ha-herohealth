@@ -2,8 +2,11 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 .coverage
+.coverage.*
 coverage.xml
+coverage.json
 htmlcov/
 .validation/
 .venv/
@@ -25,3 +28,4 @@ coverage_html/
 .env.local
 !.env.example
 .tmp/
+.DS_Store
