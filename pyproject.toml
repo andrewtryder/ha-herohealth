@@ -1,6 +1,24 @@
-[build-system]
-requires = ["setuptools>=84.0.0"]
-build-backend = "setuptools.build_meta"
+[project]
+name = "ha-herohealth"
+version = "0.0.0"
+description = "Hero Health smart pill dispenser integration for Home Assistant"
+readme = "README.md"
+requires-python = ">=3.14.2"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pre-commit==4.7.0",
+    "pytest==9.0.3",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "pytest-homeassistant-custom-component==0.13.357",
+    "pytest-socket==0.8.0",
+    "ruff==0.17.1",
+]
+
+[tool.uv]
+package = false
 
 [tool.ruff]
 target-version = "py314"
