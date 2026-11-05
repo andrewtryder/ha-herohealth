@@ -52,3 +52,4 @@ discovered account IDs and run the command again. `.env.local`, `.ha-dev/`,
 
 Pull-request titles use lower-case Conventional Commits. Release Please prepares
 releases and updates the integration manifest; do not manually publish releases.
+See [docs/porting-notes.md](docs/porting-notes.md) for architecture and protocol porting notes.

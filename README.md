@@ -51,11 +51,11 @@ Available entities can include the next scheduled dose, doses taken and missed, 
 
 The integration includes a safety-gated button entity (`button.hero_health_dispense_scheduled_dose`) and an administrative action (`hero_health.dispense_scheduled_dose`):
 
-- **Strict Eligibility Window**: A dose can only be dispensed starting 30 minutes before its scheduled time up to 6 hours after, matching Hero's physical dispenser rules.
-- **Admin-Gated Execution**: Remote dispensing is restricted to Home Assistant administrators for safety.
+- **Strict Eligibility Window**: A dose can only be dispensed when Hero marks it ready (`time_to_take`) and the current time is starting 30 minutes before its scheduled time up to 6 hours after, matching Hero's physical dispenser rules.
+- **Admin-Gated Execution**: Remote dispensing is restricted to Home Assistant administrators and always performs a fresh state check before dispensing.
 - **Durable Idempotency Journal**: Dispenses are recorded in durable storage to prevent duplicate dispenses across restarts and reloads.
 - **Fail-Closed Ambiguity Handling**: If communication drops after a dispense start frame has been sent, the dose state is flagged as unknown and subsequent remote dispenses for that time are blocked until dispenser state is physically verified.
-- **Observability Without Polling**: Availability sensors and buttons schedule precise local timers at window open/close boundaries so dashboard badges and buttons update in real time without polling the cloud.
+- **Boundary Timers & Authoritative Refresh**: Availability sensors and buttons schedule local timers at window open/close boundaries and request a targeted Hero refresh at the scheduled dose time rather than relying on continuous cloud polling.
 
 ---
 
@@ -72,13 +72,13 @@ Home Assistant's recorder stores entity state changes over time. To protect sens
       entity_globs:
         - sensor.hero_health_slot_*
   ```
-- Diagnostic downloads automatically sanitize credentials, tokens, account identifiers, and private health data.
+- Diagnostic downloads export only boolean and numeric operational metadata, omitting credentials, tokens, account identifiers, and private health data.
 
 ## More documentation
 
 - [Automation examples](docs/AUTOMATIONS.md)
 - [Migration from the earlier project](MIGRATION.md)
-- [Contributing and development](CONTRIBUTING.md)
+- [Contributing and development](CONTRIBUTING.md) and [porting notes](docs/porting-notes.md)
 
 ## Support and license
 
