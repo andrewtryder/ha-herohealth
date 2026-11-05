@@ -1,167 +1,61 @@
-<p align="center">
-  <img src="assets/hero-dispenser-icon.svg" alt="Hero Health icon" width="110" />
-</p>
+# Hero Health for Home Assistant
 
-<h1 align="center">Hero Health for Home Assistant</h1>
+<img src="assets/hero-dispenser-icon.svg" alt="Hero Health integration icon" width="100">
 
-<p align="center">
-  An easy, user-friendly Home Assistant integration for the <strong>Hero medication dispenser</strong>.
-</p>
+See your Hero medication dispenser's status, scheduled doses, and medication information in Home Assistant.
 
-<p align="center">
-  <a href="https://github.com/andrewtryder/ha-herohealth/releases">
-    <img src="https://img.shields.io/github/v/release/andrewtryder/ha-herohealth?style=for-the-badge" alt="Latest Release">
-  </a>
-  <a href="https://github.com/hacs/integration">
-    <img src="https://img.shields.io/badge/HACS-Custom-41BDF5?style=for-the-badge&logo=homeassistantcommunitystore&logoColor=white" alt="HACS Custom">
-  </a>
-  <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=andrewtryder&repository=ha-herohealth&category=integration">
-    <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Open your Home Assistant instance and open the HACS repository dialog for this repository">
-  </a>
-  <a href="https://www.home-assistant.io/">
-    <img src="https://img.shields.io/badge/Home%20Assistant-2026.8%2B-18BCF2?style=for-the-badge&logo=homeassistant&logoColor=white" alt="Home Assistant 2026.8+">
-  </a>
-</p>
+[![Latest release](https://img.shields.io/github/v/release/andrewtryder/ha-herohealth?style=flat-square)](https://github.com/andrewtryder/ha-herohealth/releases/latest)
+[![Validation on main](https://img.shields.io/github/actions/workflow/status/andrewtryder/ha-herohealth/validate.yml?branch=main&style=flat-square&label=validation)](https://github.com/andrewtryder/ha-herohealth/actions/workflows/validate.yml)
+[![License](https://img.shields.io/github/license/andrewtryder/ha-herohealth?style=flat-square)](LICENSE)
+[![HACS custom integration](https://img.shields.io/badge/HACS-Custom-orange?style=flat-square)](https://my.home-assistant.io/redirect/hacs_repository/?owner=andrewtryder&repository=ha-herohealth&category=integration)
 
----
+![Hero Health integration dashboard in Home Assistant](assets/hero-dashboard.jpg)
 
-## What this integration does
+> [!WARNING]
+> This integration can initiate a physical medication dispense through its safety-gated controls. Do not rely on an automation as a substitute for medical advice, checking the dispenser, or confirming the correct medication and dose. Review [Safety & Remote Dispensing](#safety--remote-dispensing) before using those controls.
 
-This custom integration brings your **Hero medication dispenser** into Home Assistant so you can keep an eye on your device and medication-related status right from your dashboard.
+## What can I do with it?
 
-It gives you a simple Home Assistant view of:
+Monitor dispenser connectivity, upcoming and recent doses, missed doses, seven-day adherence, low-medication warnings, and information about medication slots. Use the sensors in dashboards or the [automation examples](docs/AUTOMATIONS.md). A separate, safety-gated button and administrator action can request a scheduled physical dispense; monitoring does not require using them.
 
-- dispenser connectivity
-- next scheduled dose
-- doses taken
-- last dose taken time and recent dose activity
-- doses missed
-- 7-day adherence
-- low-medication warnings
-- medication slot status and levels
+## Requirements and compatibility
 
-It is designed to feel native in Home Assistant and make it easier to build dashboards, helpers, and automations around your Hero dispenser.
+- Home Assistant **2026.8.3 or newer**, HACS, a Hero medication dispenser, and a Hero account.
+- Some information depends on what Hero currently reports. When a live next-dose window has no future dose, the integration may use the recurring weekly schedule to show the next scheduled time.
 
----
+## Install with HACS
 
-## Screenshot
+1. In HACS, add `https://github.com/andrewtryder/ha-herohealth` as a custom repository in the **Integration** category, or use the HACS badge above.
+2. Find and install **Hero Health**.
+3. Restart Home Assistant.
 
-<p align="center">
-  <img src="assets/hero-dashboard.jpg" alt="Hero Health integration in Home Assistant" width="1000" />
-</p>
+## First-time setup
 
----
+1. Go to **Settings → Devices & services → Add integration** and select **Hero Health**.
+2. Sign in with your Hero account and finish setup.
+3. Your dispenser and available entities appear in Home Assistant.
 
-## Features
+## What you'll see in Home Assistant
 
-### Device overview
-See your Hero dispenser as a Home Assistant device, including helpful device details surfaced by the integration.
+Available entities can include the next scheduled dose, doses taken and missed, recent dose activity, seven-day adherence, low-medication counts, individual medication slots, and dispenser connectivity. The dispense-availability sensor and scheduled-dose button are separate from monitoring entities. Entity availability depends on the dispenser and account data.
 
-### Helpful sensors
-The integration creates sensors for the most useful everyday information, including:
+## Common problems and troubleshooting
 
-- **Next scheduled dose**
-- **Doses taken**
-- **Last dose taken** (Hero-reported actual time when available)
-- **Dose activity** events for taken, taken-late, and skipped doses
-- **Doses missed**
-- **7-day adherence**
-- **Dispenser connectivity**
-- **Low medications**
-- **Per-slot medication details**
-- **Per-slot low medication alerts**
+- If the dispenser appears unavailable or information is missing, check its connectivity and the Hero app, then review the integration in **Settings → Devices & services**.
+- Some information may not be present in Hero's current data. Do not infer that a medication was taken solely from a missing or stale entity.
+- For reproducible problems, open a [GitHub issue](https://github.com/andrewtryder/ha-herohealth/issues). Do not include credentials or private health information.
 
-### Smarter next scheduled dose
-The integration uses Hero’s live data first for the next scheduled dose.
-
-If Hero’s live window does not currently include a future dose, the integration can still show the next scheduled time using the dispenser’s recurring weekly schedule so the sensor stays useful throughout the day.
-
-### Dashboard and automation friendly
-All entities are available like any other Home Assistant integration, making them easy to use in:
-
-- dashboards
-- automations
-- template sensors
-- notifications
-- health-related helper views
-
-See [Automation examples](docs/AUTOMATIONS.md) for copyable patterns, including a
-twice-daily low-medication announcement that speaks the medication names instead of
-the numeric low-medication count.
-
----
-
-## Installation
-
-### Install with HACS (recommended)
-
-1. Open **HACS**
-2. Go to **Integrations**
-3. Select the three-dot menu and choose **Custom repositories**
-4. Add this repository:
-
-   `https://github.com/andrewtryder/ha-herohealth`
-
-5. Choose **Integration** as the category
-6. Click **Add**
-7. Search for **Hero Health**
-8. Install it
-9. Restart Home Assistant
-
-Or click below to open HACS directly:
-
-<p>
-  <a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=andrewtryder&repository=ha-herohealth&category=integration">
-    <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Add to HACS">
-  </a>
-</p>
-
----
-
-## Setup
-
-After installation:
-
-1. Open **Settings**
-2. Go to **Devices & Services**
-3. Click **Add Integration**
-4. Search for **Hero Health**
-5. Sign in with your Hero account
-6. Finish setup
-
-Once configured, your Hero dispenser and related sensors will appear in Home Assistant automatically.
-
----
-
-## What you’ll see in Home Assistant
-
-Depending on your dispenser configuration, you may see entities such as:
-
-- `sensor.hero_health_next_scheduled_dose`
-- `sensor.hero_health_doses_taken`
-- `sensor.hero_health_last_dose_taken`
-- `event.hero_health_dose_activity`
-- `sensor.hero_health_doses_missed`
-- `sensor.hero_health_7_day_adherence`
-- `sensor.hero_health_medications`
-- `sensor.hero_health_low_medications`
-- `binary_sensor.hero_health_dispenser_connectivity`
-- `binary_sensor.hero_health_dispense_available`
-- `button.hero_health_dispense_scheduled_dose`
-
-You’ll also get entities for individual medication slots.
-
----
+## Important limitations, safety, and privacy
 
 ## Safety & Remote Dispensing
 
 The integration includes a safety-gated button entity (`button.hero_health_dispense_scheduled_dose`) and an administrative action (`hero_health.dispense_scheduled_dose`):
 
-- **Strict Eligibility Window**: A dose can only be dispensed starting 30 minutes before its scheduled time up to 6 hours after, matching Hero's physical dispenser rules.
-- **Admin-Gated Execution**: Remote dispensing is restricted to Home Assistant administrators for safety.
+- **Strict Eligibility Window**: A dose can only be dispensed when Hero marks it ready (`time_to_take`) and the current time is starting 30 minutes before its scheduled time up to 6 hours after, matching Hero's physical dispenser rules.
+- **Admin-Gated Execution**: Remote dispensing is restricted to Home Assistant administrators and always performs a fresh state check before dispensing.
 - **Durable Idempotency Journal**: Dispenses are recorded in durable storage to prevent duplicate dispenses across restarts and reloads.
 - **Fail-Closed Ambiguity Handling**: If communication drops after a dispense start frame has been sent, the dose state is flagged as unknown and subsequent remote dispenses for that time are blocked until dispenser state is physically verified.
-- **Observability Without Polling**: Availability sensors and buttons schedule precise local timers at window open/close boundaries so dashboard badges and buttons update in real time without polling the cloud.
+- **Boundary Timers & Authoritative Refresh**: Availability sensors and buttons schedule local timers at window open/close boundaries and request a targeted Hero refresh at the scheduled dose time rather than relying on continuous cloud polling.
 
 ---
 
@@ -178,48 +72,16 @@ Home Assistant's recorder stores entity state changes over time. To protect sens
       entity_globs:
         - sensor.hero_health_slot_*
   ```
-- Diagnostic downloads automatically sanitize credentials, tokens, account identifiers, and private health data.
+- Diagnostic downloads export only boolean and numeric operational metadata, omitting credentials, tokens, account identifiers, and private health data.
 
----
+## More documentation
 
-## Removal
+- [Automation examples](docs/AUTOMATIONS.md)
+- [Migration from the earlier project](MIGRATION.md)
+- [Contributing and development](CONTRIBUTING.md) and [porting notes](docs/porting-notes.md)
 
-To uninstall the integration:
-1. Navigate to **Settings** -> **Devices & Services** -> **Hero Health**.
-2. Click the three-dot menu and select **Delete**.
-3. All local session stores, cached tokens, and entities will be removed immediately.
+## Support and license
 
----
+To remove the integration, go to **Settings → Devices & services → Hero Health**, open its menu, and select **Delete**. This removes local session stores, cached tokens, and entities.
 
-## Great uses for this integration
-
-This integration works especially well for:
-
-- showing medication status on a family dashboard
-- sending reminders when doses are coming up
-- alerting when medications are low
-- monitoring dispenser connectivity
-- building simple caregiver-friendly views in Home Assistant
-
----
-
-## Notes
-
-- This is an **unofficial** Home Assistant integration for Hero.
-- It is intended to make Hero information easier to view inside Home Assistant.
-- Some values depend on the information currently available from Hero.
-
----
-
-## Support
-
-If you run into problems or want to request a feature, please open an issue here:
-
-[GitHub Issues](https://github.com/andrewtryder/ha-herohealth/issues)
-
----
-
-## Disclaimer
-
-Hero and Hero Health are the property of their respective owner.
-This project is an independent, unofficial integration and is not affiliated with or endorsed by Hero Health.
+This community project is independent and unofficial; it is not affiliated with or endorsed by Hero Health. Hero and Hero Health belong to their respective owner. See the [license](LICENSE).
