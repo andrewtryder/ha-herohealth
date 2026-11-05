@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
-python -m venv /home/vscode/.venv
-/home/vscode/.venv/bin/python -m pip install --upgrade pip
-/home/vscode/.venv/bin/python -m pip install -r requirements_test.lock
+command -v uv >/dev/null 2>&1 || pip install uv
+uv venv --python 3.14 /home/vscode/.venv
+UV_PROJECT_ENVIRONMENT=/home/vscode/.venv uv sync --locked
 /home/vscode/.venv/bin/pre-commit install
 mkdir -p .ha-dev
 printf '%s\n' 'Environment ready. Use scripts/run-ha-dev, pytest, ruff check ., and pre-commit run --all-files.'

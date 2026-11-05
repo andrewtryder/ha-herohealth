@@ -30,18 +30,24 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
-          cache-dependency-glob: requirements_test.lock
-      - run: |
-          uv venv --python 3.14 .venv
-          uv pip sync --python .venv/bin/python requirements_test.lock
-      - run: |
-          .venv/bin/python --version
-          .venv/bin/python -c "from homeassistant.const import __version__; assert __version__ == '2026.8.3'; print(__version__)"
-          .venv/bin/python -c "from importlib.metadata import version; print(version('pytest-homeassistant-custom-component'))"
-          .venv/bin/pre-commit run --all-files
-          .venv/bin/ruff check .
-          .venv/bin/ruff format --check .
-          .venv/bin/pytest --disable-socket --allow-unix-socket
+          cache-dependency-glob: "uv.lock"
+      - name: Verify lockfile freshness
+        run: uv lock --check
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Verify baseline versions
+        run: |
+          uv run --locked python --version
+          uv run --locked python -c "from homeassistant.const import __version__; assert __version__ == '2026.8.3'; print(__version__)"
+          uv run --locked python -c "from importlib.metadata import version; print(version('pytest-homeassistant-custom-component'))"
+      - name: Run pre-commit
+        run: uv run --locked pre-commit run --all-files
+      - name: Run Ruff checks
+        run: |
+          uv run --locked ruff check .
+          uv run --locked ruff format --check .
+      - name: Run pytest
+        run: uv run --locked pytest --disable-socket --allow-unix-socket
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4.6.1
         if: always()
         with:

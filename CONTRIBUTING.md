@@ -1,7 +1,7 @@
 # Contributing
 
 Use the devcontainer (VS Code: **Dev Containers: Reopen in Container**) or a local
-Python 3.14.2 or newer, Git, and uv. The validation script creates `.venv` and syncs the pinned `requirements_test.lock`. Regenerate it after changing requirements with `uv pip compile --python-version 3.14.2 --universal requirements_test.txt -o requirements_test.lock`.
+Python 3.14.2 or newer, Git, and uv. The development environment and dependencies are managed via `pyproject.toml` and locked in `uv.lock`. Sync the environment with `uv sync --locked` and update dependencies with `uv lock`.
 
 ## Local Validation Contract
 

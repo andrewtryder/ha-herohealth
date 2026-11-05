@@ -3,7 +3,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: {interval: weekly}
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: /
     schedule: {interval: weekly}
     # Pin deterministic HA baseline (HA 2026.8.3); floating versions are tested separately in future-compat workflow.
