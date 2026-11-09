@@ -20,12 +20,14 @@ Monitor dispenser connectivity, upcoming and recent doses, missed doses, seven-d
 
 ## Requirements and compatibility
 
-- Home Assistant **2026.8.3 or newer**, HACS, a Hero medication dispenser, and a Hero account.
+- Home Assistant **2026.8.3 or newer**, HACS (or the built-in Home Assistant Marketplace in **2026.11+**), a Hero medication dispenser, and a Hero account.
 - Some information depends on what Hero currently reports. When a live next-dose window has no future dose, the integration may use the recurring weekly schedule to show the next scheduled time.
 
-## Install with HACS
+## Install with HACS or Home Assistant Marketplace
 
-1. In HACS, add `https://github.com/andrewtryder/ha-herohealth` as a custom repository in the **Integration** category, or use the HACS badge above.
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=andrewtryder&repository=ha-herohealth&category=integration)
+
+1. Click the **Open your Home Assistant instance** button above (backwards compatible: opens **HACS** on earlier versions and the built-in **Home Assistant Marketplace** on **2026.11+**), or manually add `https://github.com/andrewtryder/ha-herohealth` as a custom repository in the **Integration** category.
 2. Find and install **Hero Health**.
 3. Restart Home Assistant.
 
