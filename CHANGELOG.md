@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.5](https://github.com/andrewtryder/ha-herohealth/compare/v0.6.4...v0.6.5) (2026-11-09)
+
+
+### Bug Fixes
+
+* **config_flow:** fall back to primary account discovery when caregiver list is empty ([#67](https://github.com/andrewtryder/ha-herohealth/issues/67)) ([8ce277c](https://github.com/andrewtryder/ha-herohealth/commit/8ce277c7641088ce4cf1b92fa80d9d3cfbdabcc9)), closes [#49](https://github.com/andrewtryder/ha-herohealth/issues/49)
+
 ## [0.6.4](https://github.com/andrewtryder/ha-herohealth/compare/v0.6.3...v0.6.4) (2026-11-03)
 
 
