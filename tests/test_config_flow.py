@@ -36,9 +36,10 @@ def test_config_translation_descriptions_exist():
 
 
 class FakeClient:
-    def __init__(self, accounts):
+    def __init__(self, accounts, status_data=None):
         self.accounts = accounts
-        self.user_status = AsyncMock(return_value={})
+        status_return = status_data if status_data is not None else {}
+        self.user_status = AsyncMock(return_value=status_return)
         self.check_hero_offline = AsyncMock(return_value={"hero_offline": False})
         self.last_d2d_config = AsyncMock(return_value={"config": {"pills": []}})
         self.home_screen_doses = AsyncMock(return_value={"dates": []})
@@ -52,12 +53,13 @@ class FakeClient:
 
 class FakeSession:
     accounts = [{"account_id": "fake-account-1", "device_nickname": "Demo Hero"}]
+    status_data = None
     initialize_error = None
     initialize_errors = []
     closed = 0
 
     def __init__(self, *_args, **_kwargs):
-        self.client = FakeClient(self.accounts)
+        self.client = FakeClient(self.accounts, self.status_data)
         self.tokens = HeroTokens("fresh-access", "fresh-refresh", 3600, 9999999999)
 
     async def async_initialize(self):
@@ -81,6 +83,7 @@ def fake_sessions(monkeypatch):
     FakeSession.accounts = [
         {"account_id": "fake-account-1", "device_nickname": "Demo Hero"}
     ]
+    FakeSession.status_data = None
     FakeSession.initialize_error = None
     FakeSession.initialize_errors = []
     FakeSession.closed = 0
@@ -197,6 +200,102 @@ async def test_flow_handles_empty_accounts_and_validation_errors(hass, fake_sess
         context={"source": "user"},
         data={CONF_EMAIL: "test@example.invalid", CONF_PASSWORD: "fake-password"},
     )
+    assert result["errors"] == {"base": "invalid_response"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "accounts_payload",
+    [
+        [],
+        {"results": []},
+    ],
+)
+async def test_empty_caregiver_list_falls_back_to_primary_user_status_account(
+    hass, fake_sessions, accounts_payload
+):
+    """Primary dispenser accounts discover account_id via user_status fallback."""
+    fake_sessions.accounts = accounts_payload
+    fake_sessions.status_data = {"account_id": "primary-account-123"}
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "user"},
+        data={CONF_EMAIL: "test@example.invalid", CONF_PASSWORD: "fake-password"},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_ACCOUNT_ID] == "primary-account-123"
+    assert result["result"].unique_id == "primary-account-123"
+
+
+@pytest.mark.asyncio
+async def test_empty_caregiver_list_supports_integer_account_id(hass, fake_sessions):
+    """Integer account_id in user_status is accepted and converted to string."""
+    fake_sessions.accounts = []
+    fake_sessions.status_data = {"account_id": 98765}
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "user"},
+        data={CONF_EMAIL: "test@example.invalid", CONF_PASSWORD: "fake-password"},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_ACCOUNT_ID] == "98765"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_status",
+    [
+        {},
+        {"account_id": None},
+        {"account_id": ""},
+        {"account_id": "   "},
+        {"account_id": False},
+        {"account_id": True},
+        {"account_id": 0},
+        {"account_id": -5},
+        {"account_id": ["nested"]},
+        {"account_id": {"nested": "dict"}},
+        "not-a-dict",
+    ],
+)
+async def test_empty_caregiver_list_rejects_invalid_primary_account_id(
+    hass, fake_sessions, bad_status
+):
+    """Invalid or missing account_id fails closed with invalid_response."""
+    fake_sessions.accounts = []
+    fake_sessions.status_data = bad_status
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "user"},
+        data={CONF_EMAIL: "test@example.invalid", CONF_PASSWORD: "fake-password"},
+    )
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "invalid_response"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "malformed_accounts",
+    [
+        "not-a-list",
+        123,
+        None,
+        {"results": "not-a-list"},
+        {"not_results": []},
+    ],
+)
+async def test_malformed_caregiver_response_does_not_invoke_fallback(
+    hass, fake_sessions, malformed_accounts
+):
+    """Malformed caregiver responses fail closed without querying fallback."""
+    fake_sessions.accounts = malformed_accounts
+    fake_sessions.status_data = {"account_id": "should-not-be-used"}
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "user"},
+        data={CONF_EMAIL: "test@example.invalid", CONF_PASSWORD: "fake-password"},
+    )
+    assert result["type"] == "form"
     assert result["errors"] == {"base": "invalid_response"}
 
 

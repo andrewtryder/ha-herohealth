@@ -65,20 +65,37 @@ class HeroHealthConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             client = await session.async_initialize()
             accounts = await client.caregiver_patient_list()
-            raw_accounts: list[Any] = []
+            raw_accounts: list[Any] | None = None
             if isinstance(accounts, list):
                 raw_accounts = accounts
             elif isinstance(accounts, dict) and isinstance(
                 accounts.get("results"), list
             ):
                 raw_accounts = accounts["results"]
-            self._accounts = [
-                a
-                for a in raw_accounts
-                if isinstance(a, dict)
-                and a.get("account_id") is not None
-                and str(a.get("account_id")).strip()
-            ]
+
+            if raw_accounts is not None:
+                self._accounts = [
+                    a
+                    for a in raw_accounts
+                    if isinstance(a, dict)
+                    and a.get("account_id") is not None
+                    and str(a.get("account_id")).strip()
+                ]
+                # Fallback for primary dispenser accounts where caregiver_patient_list
+                # returns an empty list, but user_status reports an account_id.
+                if not self._accounts and len(raw_accounts) == 0:
+                    status = await client.user_status()
+                    primary_id = (
+                        status.get("account_id") if isinstance(status, dict) else None
+                    )
+                    if (isinstance(primary_id, str) and primary_id.strip()) or (
+                        isinstance(primary_id, int)
+                        and not isinstance(primary_id, bool)
+                        and primary_id > 0
+                    ):
+                        self._accounts = [{"account_id": str(primary_id).strip()}]
+            else:
+                self._accounts = []
             if not self._accounts:
                 return self.async_show_form(
                     step_id=step_id,
